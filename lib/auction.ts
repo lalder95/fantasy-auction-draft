@@ -28,19 +28,22 @@ export interface PlayerUp {
   nominationIndex: number; // Which player slot this is (for multiple nominations)
 }
 
+// lib/auction.ts - Update this interface
 export interface AuctionSettings {
-  leagueId: string;
-  leagueName: string;
-  nominationRounds: number;
-  maxPlayers: number | null; // Max players per team, null for unlimited
-  minPlayers: number; // Min players per team
-  simultaneousNominations: number;
-  nominationDuration: number; // in seconds
-  nominationTimeAllowed: number; // in seconds
-  skipMissedNominations: boolean;
-  showHighBidder: boolean;
-  defaultBudget: number;
-}
+    leagueId: string;
+    leagueName: string;
+    nominationRounds: number;
+    maxPlayers: number | null; // Max players per team, null for unlimited
+    minPlayers: number; // Min players per team
+    simultaneousNominations: number;
+    nominationDuration: number; // in seconds
+    nominationTimeAllowed: number; // in seconds
+    skipMissedNominations: boolean;
+    showHighBidder: boolean;
+    defaultBudget: number;
+    completionType: 'nominationRounds' | 'playersWon'; // Add this
+    targetPlayersWon: number; // Add this
+  }
 
 export interface Auction {
   id: string;

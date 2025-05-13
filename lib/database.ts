@@ -1,10 +1,12 @@
-// lib/database.ts
-import { kv } from '@vercel/kv';
+// lib/database.ts - Updated for Upstash Redis using Vercel's recommended pattern
+import { Redis } from '@upstash/redis';
 import { Auction } from './auction';
 
-/**
- * Prefix for auction keys in KV store
- */
+// Initialize Redis using environment variables
+// This automatically uses UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN
+const redis = Redis.fromEnv();
+
+// Prefix for auction keys in Redis store
 const AUCTION_PREFIX = 'auction:';
 
 /**
@@ -12,7 +14,7 @@ const AUCTION_PREFIX = 'auction:';
  */
 export async function saveAuction(auction: Auction): Promise<void> {
   try {
-    await kv.set(`${AUCTION_PREFIX}${auction.id}`, JSON.stringify(auction));
+    await redis.set(`${AUCTION_PREFIX}${auction.id}`, JSON.stringify(auction));
   } catch (error) {
     console.error('Failed to save auction:', error);
     throw new Error('Failed to save auction data');
@@ -24,7 +26,7 @@ export async function saveAuction(auction: Auction): Promise<void> {
  */
 export async function getAuction(auctionId: string): Promise<Auction | null> {
   try {
-    const auctionData = await kv.get(`${AUCTION_PREFIX}${auctionId}`);
+    const auctionData = await redis.get(`${AUCTION_PREFIX}${auctionId}`);
     
     if (!auctionData) {
       return null;
@@ -42,7 +44,7 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
  */
 export async function deleteAuction(auctionId: string): Promise<void> {
   try {
-    await kv.del(`${AUCTION_PREFIX}${auctionId}`);
+    await redis.del(`${AUCTION_PREFIX}${auctionId}`);
   } catch (error) {
     console.error('Failed to delete auction:', error);
     throw new Error('Failed to delete auction data');
@@ -55,7 +57,7 @@ export async function deleteAuction(auctionId: string): Promise<void> {
 export async function getCommissionerAuctions(commissionerId: string): Promise<Auction[]> {
   try {
     // Get all auction keys
-    const keys = await kv.keys(`${AUCTION_PREFIX}*`);
+    const keys = await redis.keys(`${AUCTION_PREFIX}*`);
     
     // No auctions found
     if (keys.length === 0) {
@@ -64,7 +66,7 @@ export async function getCommissionerAuctions(commissionerId: string): Promise<A
     
     // Get all auctions
     const auctionDataArray = await Promise.all(
-      keys.map(key => kv.get(key))
+      keys.map(key => redis.get(key))
     );
     
     // Filter for commissioner's auctions
@@ -89,7 +91,7 @@ export async function createManagerSession(
 ): Promise<string> {
   try {
     const sessionId = `session:${auctionId}:${managerId}`;
-    await kv.set(sessionId, managerId, { ex: 86400 }); // Expire in 24 hours
+    await redis.set(sessionId, managerId, { ex: 86400 }); // Expire in 24 hours
     return sessionId;
   } catch (error) {
     console.error('Failed to create manager session:', error);
@@ -105,7 +107,7 @@ export async function validateManagerSession(
   auctionId: string
 ): Promise<string | null> {
   try {
-    const managerId = await kv.get(sessionId);
+    const managerId = await redis.get(sessionId);
     
     if (!managerId) {
       return null;

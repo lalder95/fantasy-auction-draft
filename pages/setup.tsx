@@ -35,6 +35,8 @@ export default function Setup() {
     skipMissedNominations: false,
     showHighBidder: true,
     defaultBudget: 200,
+    completionType: 'nominationRounds' as 'nominationRounds' | 'playersWon',
+    targetPlayersWon: 5, // Default to 5 players per team if using playersWon completion type
   });
   const [selectedPlayers, setSelectedPlayers] = useState<any[]>([]);
   const [auctionId, setAuctionId] = useState<string | null>(null);
@@ -85,8 +87,24 @@ export default function Setup() {
   };
   
   // Handle nomination settings configured
-  const handleNominationConfigured = (updatedSettings: typeof settings) => {
-    setSettings(updatedSettings);
+  // Handle nomination settings configured
+const handleNominationConfigured = (updatedSettings: {
+    nominationRounds: number;
+    maxPlayers: number | null;
+    minPlayers: number;
+    simultaneousNominations: number;
+    nominationDuration: number;
+    nominationTimeAllowed: number;
+    skipMissedNominations: boolean;
+    showHighBidder: boolean;
+    completionType: 'nominationRounds' | 'playersWon';
+    targetPlayersWon: number;
+  }) => {
+    // Keep defaultBudget from the current settings (it's not part of NominationConfig)
+    setSettings({
+      ...updatedSettings,
+      defaultBudget: settings.defaultBudget,
+    });
     setCurrentStep(SetupStep.PLAYER_SELECTION);
   };
   
@@ -169,13 +187,24 @@ export default function Setup() {
           />
         );
       
-      case SetupStep.NOMINATION_CONFIG:
-        return (
-          <NominationConfig
-            initialSettings={settings}
-            onNominationConfigured={handleNominationConfigured}
-          />
-        );
+        case SetupStep.NOMINATION_CONFIG:
+            return (
+              <NominationConfig
+                initialSettings={{
+                  nominationRounds: settings.nominationRounds,
+                  maxPlayers: settings.maxPlayers,
+                  minPlayers: settings.minPlayers,
+                  simultaneousNominations: settings.simultaneousNominations,
+                  nominationDuration: settings.nominationDuration,
+                  nominationTimeAllowed: settings.nominationTimeAllowed,
+                  skipMissedNominations: settings.skipMissedNominations,
+                  showHighBidder: settings.showHighBidder,
+                  completionType: settings.completionType,
+                  targetPlayersWon: settings.targetPlayersWon
+                }}
+                onNominationConfigured={handleNominationConfigured}
+              />
+            );
       
       case SetupStep.PLAYER_SELECTION:
         return (

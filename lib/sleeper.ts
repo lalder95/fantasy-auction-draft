@@ -139,7 +139,13 @@ export async function getEligiblePlayers(
         return isEligiblePosition && (includeRostered || !isRostered);
       })
       // Sort by name for convenience
-      .sort((a, b) => a.full_name.localeCompare(b.full_name));
+      .sort((a, b) => {
+        // Handle cases where full_name might be undefined
+        if (!a.full_name && !b.full_name) return 0; // Both undefined, consider equal
+        if (!a.full_name) return 1; // a undefined, b defined, sort a after b
+        if (!b.full_name) return -1; // a defined, b undefined, sort a before b
+        return a.full_name.localeCompare(b.full_name); // Normal comparison
+      });
     
     return eligiblePlayers;
   } catch (error) {
