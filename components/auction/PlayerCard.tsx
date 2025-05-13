@@ -1,4 +1,4 @@
-// components/auction/PlayerCard.tsx
+// components/auction/PlayerCard.tsx - Fixed version
 import React, { useState, useEffect } from 'react';
 import { Manager, PlayerUp } from '../../lib/auction';
 
@@ -123,7 +123,7 @@ export default function PlayerCard({
         
         {/* Bid controls for managers and commissioner */}
         {role !== 'viewer' && (
-          <div className={`flex items-center space-x-2 ${isWinning ? 'opacity-50' : ''}`}>
+          <div className={`flex items-center space-x-2 ${!!isWinning ? 'opacity-50' : ''}`}>
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <span className="text-gray-500 sm:text-sm">$</span>
@@ -134,7 +134,7 @@ export default function PlayerCard({
                 max={currentManager?.budget || 999999}
                 value={bidAmount}
                 onChange={(e) => setBidAmount(parseInt(e.target.value) || player.currentBid + 1)}
-                disabled={isWinning || hasPassed}
+                disabled={!!isWinning || !!hasPassed}
                 className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-7 pr-12 sm:text-sm border-gray-300 rounded-md"
               />
             </div>
@@ -142,7 +142,7 @@ export default function PlayerCard({
             <button
               type="button"
               onClick={handleBid}
-              disabled={isWinning || hasPassed || (currentManager && bidAmount > currentManager.budget)}
+              disabled={!!isWinning || !!hasPassed || !!(currentManager && bidAmount > currentManager.budget)}
               className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
             >
               Bid
@@ -151,7 +151,7 @@ export default function PlayerCard({
             <button
               type="button"
               onClick={handlePass}
-              disabled={isWinning || hasPassed}
+              disabled={!!isWinning || !!hasPassed}
               className="py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
             >
               Pass
