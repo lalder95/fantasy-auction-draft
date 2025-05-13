@@ -1,4 +1,4 @@
-// components/auction/BidInterface.tsx
+// components/auction/BidInterface.tsx - Fixed version
 import React, { useState } from 'react';
 import { Auction, Manager } from '../../lib/auction';
 
@@ -13,7 +13,6 @@ interface BidInterfaceProps {
 export default function BidInterface({
   auction,
   currentManager,
-  role,
   canNominate,
   onNominate,
 }: BidInterfaceProps) {
@@ -124,12 +123,12 @@ export default function BidInterface({
             </div>
             
             <button
-                type="button"
-                onClick={handleNominate}
-                disabled={!!(selectedPlayer === null) || startingBid < 1 || !!(currentManager && startingBid > currentManager.budget)}
-                className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                >
-                Nominate Player
+              type="button"
+              onClick={handleNominate}
+              disabled={!selectedPlayer || startingBid < 1 || (currentManager && startingBid > currentManager.budget)}
+              className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+            >
+              Nominate Player
             </button>
           </div>
         )}

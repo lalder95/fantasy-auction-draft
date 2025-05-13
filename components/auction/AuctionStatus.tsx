@@ -1,4 +1,4 @@
-// components/auction/AuctionStatus.tsx
+// components/auction/AuctionStatus.tsx - Fixed version
 import React from 'react';
 import { Auction, Manager } from '../../lib/auction';
 
@@ -11,7 +11,6 @@ interface AuctionStatusProps {
 export default function AuctionStatus({
   auction,
   currentManager,
-  role,
 }: AuctionStatusProps) {
   const getStatusTag = () => {
     switch (auction.status) {

@@ -1,4 +1,4 @@
-// components/setup/NominationConfig.tsx
+// components/setup/NominationConfig.tsx - Fixed version
 import React, { useState } from 'react';
 
 interface NominationConfigProps {
@@ -235,7 +235,7 @@ export default function NominationConfig({
             <span>48 hours</span>
           </div>
           <p className="mt-1 text-sm text-gray-500">
-            How long managers have to nominate a player when it's their turn.
+            How long managers have to nominate a player when it&apos;s their turn.
           </p>
         </div>
         

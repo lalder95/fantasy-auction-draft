@@ -1,4 +1,4 @@
-// pages/index.tsx
+// pages/index.tsx - Fixed version
 import React from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -62,7 +62,7 @@ export default function Home() {
               <div className="px-4 py-5 sm:p-6">
                 <h3 className="text-lg font-medium text-gray-900">Full Customization</h3>
                 <p className="mt-2 text-sm text-gray-500">
-                  Set custom budgets, nomination rules, auction formats, and more to match your league's preferences.
+                  Set custom budgets, nomination rules, auction formats, and more to match your league&apos;s preferences.
                 </p>
               </div>
             </div>
@@ -89,7 +89,7 @@ export default function Home() {
               <div className="px-4 py-5 sm:p-6">
                 <h3 className="text-lg font-medium text-gray-900">Nomination Queues</h3>
                 <p className="mt-2 text-sm text-gray-500">
-                  Let managers prepare by creating a queue of players they want to nominate when it's their turn.
+                  Let managers prepare by creating a queue of players they want to nominate when it&apos;s their turn.
                 </p>
               </div>
             </div>

@@ -1,5 +1,5 @@
-// pages/auction/[id].tsx
-import React, { useEffect, useState } from 'react';
+// pages/auction/[id].tsx - Fixed version
+import React from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import AuctionRoom from '../../components/auction/AuctionRoom';
