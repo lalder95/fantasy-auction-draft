@@ -1,35 +1,51 @@
-// lib/database.ts (Updated with better error handling)
+// lib/database.ts (Explicit initialization)
 import { Redis } from '@upstash/redis';
 import { Auction } from './auction';
 
-// More robust Redis initialization with error handling
-let redis: Redis;
+// Explicitly initialize Redis with the exact credentials
+// Avoid using Redis.fromEnv() to prevent confusion with multiple env vars
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || 'https://crisp-lacewing-27676.upstash.io',
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || 'AWwcAAIjcDEiZDQwNGNmMDZiYWI0MWMzOTU0YjQ1ZDhkNzgyOTdmMXAxMA'
+});
 
-try {
-  // First try to initialize from environment variables
-  redis = Redis.fromEnv();
-  console.log('Redis initialized successfully from environment variables');
-} catch (error) {
-  console.error('Failed to initialize Redis from environment variables:', error);
-  
-  // Fallback to direct initialization if environment variables aren't available
-  // You'll need to replace these placeholders with your actual Redis URL and token
-  const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || 'https://your-redis-url.upstash.io';
-  const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || 'your-redis-token';
-  
-  redis = new Redis({
-    url: REDIS_URL,
-    token: REDIS_TOKEN,
-  });
-  
-  console.log('Redis initialized with fallback configuration');
-}
+// Log initialization for debugging
+console.log('Redis initialized with URL:', process.env.UPSTASH_REDIS_REST_URL?.substring(0, 20) + '...');
 
-// Prefix for auction keys in Redis store
+// Prefix for auction keys in storage
 const AUCTION_PREFIX = 'auction:';
+const SESSION_PREFIX = 'session:';
 
 /**
- * Save auction to database with better error handling
+ * Test the Redis connection
+ */
+export async function testRedisConnection(): Promise<boolean> {
+  try {
+    const testKey = 'connection-test';
+    const testValue = `test-${Date.now()}`;
+    
+    // Try a simple set operation
+    await redis.set(testKey, testValue);
+    
+    // Try to get the value back
+    const fetchedValue = await redis.get(testKey);
+    
+    // Clean up
+    await redis.del(testKey);
+    
+    // Check if the value matches
+    const success = fetchedValue === testValue;
+    console.log('Redis connection test:', success ? 'PASSED' : 'FAILED');
+    
+    return success;
+  } catch (error) {
+    console.error('Redis connection test failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Save auction to database with explicit error handling
  */
 export async function saveAuction(auction: Auction): Promise<void> {
   if (!auction || !auction.id) {
@@ -40,10 +56,23 @@ export async function saveAuction(auction: Auction): Promise<void> {
     const key = `${AUCTION_PREFIX}${auction.id}`;
     console.log(`Saving auction with key: ${key}`);
     
+    // Test connection before attempting to save
+    const connectionOk = await testRedisConnection();
+    if (!connectionOk) {
+      throw new Error('Redis connection test failed before saving auction');
+    }
+    
     // Convert to string for storage
     const auctionData = JSON.stringify(auction);
     
-    await redis.set(key, auctionData);
+    // Use explicit set operation
+    const result = await redis.set(key, auctionData);
+    console.log(`Save auction result:`, result);
+    
+    if (result !== 'OK') {
+      throw new Error(`Unexpected result from Redis set operation: ${result}`);
+    }
+    
     console.log(`Successfully saved auction: ${auction.id}`);
   } catch (error) {
     console.error(`Failed to save auction ${auction.id}:`, error);
@@ -52,7 +81,7 @@ export async function saveAuction(auction: Auction): Promise<void> {
 }
 
 /**
- * Get auction from database with better error handling
+ * Get auction from database
  */
 export async function getAuction(auctionId: string): Promise<Auction | null> {
   if (!auctionId) {
@@ -63,6 +92,7 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
     const key = `${AUCTION_PREFIX}${auctionId}`;
     console.log(`Fetching auction with key: ${key}`);
     
+    // Use explicit get operation
     const auctionData = await redis.get(key);
     
     if (!auctionData) {
@@ -107,22 +137,18 @@ export async function getCommissionerAuctions(commissionerId: string): Promise<A
   }
   
   try {
-    // Get all auction keys
     console.log(`Fetching auctions for commissioner: ${commissionerId}`);
     const keys = await redis.keys(`${AUCTION_PREFIX}*`);
     
-    // No auctions found
     if (keys.length === 0) {
       console.log(`No auctions found for commissioner: ${commissionerId}`);
       return [];
     }
     
-    // Get all auctions
     const auctionDataArray = await Promise.all(
       keys.map(key => redis.get(key))
     );
     
-    // Filter for commissioner's auctions
     const commissionerAuctions = auctionDataArray
       .filter(data => data !== null)
       .map(data => JSON.parse(data as string) as Auction)
@@ -148,7 +174,7 @@ export async function createManagerSession(
   }
   
   try {
-    const sessionId = `session:${auctionId}:${managerId}`;
+    const sessionId = `${SESSION_PREFIX}${auctionId}:${managerId}`;
     console.log(`Creating manager session: ${sessionId}`);
     
     await redis.set(sessionId, managerId, { ex: 86400 }); // Expire in 24 hours
