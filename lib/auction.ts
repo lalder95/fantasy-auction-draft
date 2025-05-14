@@ -1,4 +1,4 @@
-// lib/auction.ts
+// lib/auction.ts - Fixed to include new required settings properties
 import { v4 as uuidv4 } from 'uuid';
 import { SleeperPlayer } from './sleeper';
 
@@ -28,22 +28,21 @@ export interface PlayerUp {
   nominationIndex: number; // Which player slot this is (for multiple nominations)
 }
 
-// lib/auction.ts - Update this interface
 export interface AuctionSettings {
-    leagueId: string;
-    leagueName: string;
-    nominationRounds: number;
-    maxPlayers: number | null; // Max players per team, null for unlimited
-    minPlayers: number; // Min players per team
-    simultaneousNominations: number;
-    nominationDuration: number; // in seconds
-    nominationTimeAllowed: number; // in seconds
-    skipMissedNominations: boolean;
-    showHighBidder: boolean;
-    defaultBudget: number;
-    completionType: 'nominationRounds' | 'playersWon'; // Add this
-    targetPlayersWon: number; // Add this
-  }
+  leagueId: string;
+  leagueName: string;
+  nominationRounds: number;
+  maxPlayers: number | null; // Max players per team, null for unlimited
+  minPlayers: number; // Min players per team
+  simultaneousNominations: number;
+  nominationDuration: number; // in seconds
+  nominationTimeAllowed: number; // in seconds
+  skipMissedNominations: boolean;
+  showHighBidder: boolean;
+  defaultBudget: number;
+  completionType: 'nominationRounds' | 'playersWon';
+  targetPlayersWon: number;
+}
 
 export interface Auction {
   id: string;
@@ -81,6 +80,8 @@ export function createAuction(
       skipMissedNominations: false,
       showHighBidder: true,
       defaultBudget: 200,
+      completionType: 'nominationRounds', // Default to nomination rounds
+      targetPlayersWon: 5, // Default to 5 players per team
     },
     managers: [],
     availablePlayers: [],
