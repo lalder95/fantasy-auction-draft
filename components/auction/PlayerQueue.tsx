@@ -1,4 +1,4 @@
-// components/auction/PlayerQueue.tsx
+// components/auction/PlayerQueue.tsx - Updated for consistency
 import React, { useState } from 'react';
 import { Auction } from '../../lib/auction';
 
@@ -62,6 +62,9 @@ export default function PlayerQueue({
     onNominate(nextPlayerId, 1);
     setQueuedPlayers(queuedPlayers.slice(1));
   };
+  
+  // Button disabled state
+  const isNominateButtonDisabled = queuedPlayers.length === 0 || !onNominate;
   
   return (
     <div className="bg-white shadow-md rounded-lg overflow-hidden border border-gray-200">
@@ -153,6 +156,7 @@ export default function PlayerQueue({
               <button
                 type="button"
                 onClick={nominateNext}
+                disabled={isNominateButtonDisabled}
                 className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 Nominate Next Player

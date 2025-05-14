@@ -1,4 +1,4 @@
-// components/auction/PlayerCard.tsx - Fixed version
+// components/auction/PlayerCard.tsx - Updated typing
 import React, { useState, useEffect } from 'react';
 import { Manager, PlayerUp } from '../../lib/auction';
 

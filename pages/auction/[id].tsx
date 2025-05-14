@@ -1,4 +1,4 @@
-// pages/auction/[id].tsx - Fixed version
+// pages/auction/[id].tsx - Fixed props
 import React from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
@@ -26,6 +26,12 @@ export default function AuctionPage() {
     );
   }
   
+  // Validate role
+  const validRole: 'commissioner' | 'manager' | 'viewer' = 
+    role === 'commissioner' || role === 'manager' || role === 'viewer' 
+      ? role as 'commissioner' | 'manager' | 'viewer' 
+      : 'viewer'; // Default to viewer for invalid roles
+  
   return (
     <div>
       <Head>
@@ -36,7 +42,7 @@ export default function AuctionPage() {
       
       <AuctionRoom
         auctionId={id}
-        role="commissioner"
+        role={validRole}
         managerId={typeof commissionerId === 'string' ? commissionerId : undefined}
       />
     </div>

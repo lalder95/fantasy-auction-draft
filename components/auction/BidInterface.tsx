@@ -1,11 +1,11 @@
-// components/auction/BidInterface.tsx - Fixed version
+// components/auction/BidInterface.tsx - Update role type to include viewer
 import React, { useState } from 'react';
 import { Auction, Manager } from '../../lib/auction';
 
 interface BidInterfaceProps {
   auction: Auction;
   currentManager: Manager | null;
-  role: 'commissioner' | 'manager';
+  role: 'commissioner' | 'manager' | 'viewer';
   canNominate: boolean;
   onNominate: (playerId: string, startingBid: number) => void;
 }
@@ -13,11 +13,12 @@ interface BidInterfaceProps {
 export default function BidInterface({
   auction,
   currentManager,
+  role,
   canNominate,
   onNominate,
 }: BidInterfaceProps) {
   const [nominationSearch, setNominationSearch] = useState('');
-  const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
+  const [selectedPlayer, setSelectedPlayer] = useState<string | undefined>(undefined);
   const [startingBid, setStartingBid] = useState(1);
   
   // Filter available players by search term
@@ -33,7 +34,7 @@ export default function BidInterface({
   const handleNominate = () => {
     if (selectedPlayer && canNominate) {
       onNominate(selectedPlayer, startingBid);
-      setSelectedPlayer(null);
+      setSelectedPlayer(undefined);
       setNominationSearch('');
       setStartingBid(1);
     }
@@ -47,6 +48,16 @@ export default function BidInterface({
       setNominationSearch(player.full_name);
     }
   };
+  
+  // Calculate button disabled state
+  const isButtonDisabled = !selectedPlayer || 
+                           startingBid < 1 || 
+                           (!!currentManager && startingBid > currentManager.budget);
+  
+  // Viewers don't see the nomination interface
+  if (role === 'viewer') {
+    return null;
+  }
   
   return (
     <div className="bg-white shadow-md rounded-lg overflow-hidden border border-gray-200">
@@ -75,7 +86,7 @@ export default function BidInterface({
                 value={nominationSearch}
                 onChange={(e) => {
                   setNominationSearch(e.target.value);
-                  setSelectedPlayer(null);
+                  setSelectedPlayer(undefined);
                 }}
                 className="focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
                 placeholder="Type player name, team, or position"
@@ -125,7 +136,7 @@ export default function BidInterface({
             <button
               type="button"
               onClick={handleNominate}
-              disabled={!selectedPlayer || startingBid < 1 || (currentManager && startingBid > currentManager.budget)}
+              disabled={isButtonDisabled}
               className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
             >
               Nominate Player

@@ -1,5 +1,5 @@
-// pages/manager/[id]/[managerId].tsx
-import React from 'react';
+// pages/manager/[id]/[managerId].tsx - Fixed props
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import AuctionRoom from '../../../components/auction/AuctionRoom';
@@ -8,12 +8,12 @@ import { createManagerSession } from '../../../lib/database';
 export default function ManagerPage() {
   const router = useRouter();
   const { id, managerId } = router.query;
-  const [sessionId, setSessionId] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   
   // Create session for manager
-  React.useEffect(() => {
+  useEffect(() => {
     const createSession = async () => {
       if (!id || !managerId || typeof id !== 'string' || typeof managerId !== 'string') {
         setError('Invalid manager URL');

@@ -1,4 +1,4 @@
-// pages/viewer/[id].tsx
+// pages/viewer/[id].tsx - Fixed props
 import React from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
