@@ -1,4 +1,4 @@
-// components/setup/NominationConfig.tsx - Fixed version
+// components/setup/NominationConfig.tsx - Fixed maxPlayers null issue
 import React, { useState } from 'react';
 
 interface NominationConfigProps {
@@ -30,6 +30,14 @@ export default function NominationConfig({
     setSettings({
       ...settings,
       [field]: value,
+    });
+  };
+  
+  // Special handler for maxPlayers which can be null
+  const handleMaxPlayersChange = (value: string) => {
+    setSettings({
+      ...settings,
+      maxPlayers: value === '' ? null : parseInt(value) || 0,
     });
   };
   
@@ -157,10 +165,7 @@ export default function NominationConfig({
             id="maxPlayers"
             min="0"
             value={settings.maxPlayers === null ? '' : settings.maxPlayers}
-            onChange={(e) => {
-              const value = e.target.value === '' ? null : parseInt(e.target.value) || 0;
-              handleSettingChange('maxPlayers', value);
-            }}
+            onChange={(e) => handleMaxPlayersChange(e.target.value)}
             className="focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
           />
           <p className="mt-1 text-sm text-gray-500">
