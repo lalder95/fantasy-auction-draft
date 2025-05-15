@@ -1,19 +1,33 @@
-// lib/database.ts (Corrected exports)
+// lib/database.ts (No environment variables)
 import { Redis } from '@upstash/redis';
 import { Auction } from './auction';
 
-// Create a single global Redis client
+// Create a single global Redis client with hardcoded credentials,
+// completely avoiding environment variables
+console.log('Creating Redis client with direct hardcoded credentials');
+
+// Directly use the exact credentials from your Upstash dashboard
 const redis = new Redis({
-  url: 'https://crisp-lacewing-27676.upstash.io',
-  token: 'AWwcAAIjcDEiZDQwNGNmMDZiYWI0MWMzOTU0YjQ1ZDhkNzgyOTdmMXAxMA'
+  url: "https://crisp-lacewing-27676.upstash.io",
+  token: "AWwcAAIjcDEiZDQwNGNmMDZiYWI0MWMzOTU0YjQ1ZDhkNzgyOTdmMXAxMA"
 });
+
+// Simple test to verify Redis client works on startup
+(async () => {
+  try {
+    const testKey = 'init-test';
+    await redis.set(testKey, 'init-success');
+    const result = await redis.get(testKey);
+    await redis.del(testKey);
+    console.log('Redis client initialization test:', result === 'init-success' ? 'SUCCESS' : 'FAILED');
+  } catch (error) {
+    console.error('Redis initialization test failed:', error);
+  }
+})();
 
 // Prefix for keys
 const AUCTION_PREFIX = 'auction:';
 const SESSION_PREFIX = 'session:';
-
-// Log the initialization
-console.log('Upstash Redis client initialized directly with hardcoded credentials');
 
 /**
  * Save auction to database
@@ -30,7 +44,7 @@ export async function saveAuction(auction: Auction): Promise<void> {
     // Convert to string
     const auctionData = JSON.stringify(auction);
     
-    // Save to Redis
+    // Save directly to Redis
     await redis.set(key, auctionData);
     
     console.log(`Successfully saved auction: ${auction.id}`);
@@ -52,7 +66,7 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
     const key = `${AUCTION_PREFIX}${auctionId}`;
     console.log(`Fetching auction with key: ${key}`);
     
-    // Get from Redis
+    // Get directly from Redis
     const auctionData = await redis.get<string>(key);
     
     if (!auctionData) {
@@ -188,11 +202,10 @@ export async function validateManagerSession(
 }
 
 /**
- * Simple test function
+ * Test Redis connection
  */
 export async function testRedisConnection(): Promise<boolean> {
   try {
-    // Use a simple ping command
     const testKey = 'connection-test';
     const testValue = `test-${Date.now()}`;
     
@@ -200,10 +213,7 @@ export async function testRedisConnection(): Promise<boolean> {
     const result = await redis.get<string>(testKey);
     await redis.del(testKey);
     
-    const success = result === testValue;
-    console.log('Redis connection test:', success ? 'PASSED' : 'FAILED');
-    
-    return success;
+    return result === testValue;
   } catch (error) {
     console.error('Redis connection test failed:', error);
     return false;
