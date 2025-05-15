@@ -1,4 +1,4 @@
-// pages/api/auction/settings.ts (Simplified for Direct Database)
+// pages/api/auction/settings.ts (Extremely Simplified)
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAuction, saveAuction } from '../../../lib/database';
 
@@ -20,7 +20,6 @@ export default async function handler(
     return res.status(405).json({ message: 'Method not allowed' });
   }
   
-  console.log('Received settings update request');
   const { auctionId, settings } = req.body;
   
   if (!auctionId || !settings) {
@@ -31,17 +30,13 @@ export default async function handler(
   
   try {
     // Get existing auction
-    console.log('Attempting to fetch auction with ID:', auctionId);
     const auction = await getAuction(auctionId);
     
     if (!auction) {
-      console.log('Auction not found with ID:', auctionId);
       return res.status(404).json({ message: 'Auction not found' });
     }
     
-    console.log('Successfully retrieved auction. Updating settings');
-    
-    // Create updated auction with new settings
+    // Update auction with new settings
     const updatedAuction = {
       ...auction,
       settings: {
@@ -51,9 +46,7 @@ export default async function handler(
     };
     
     // Save updated auction
-    console.log('Saving updated auction');
     await saveAuction(updatedAuction);
-    console.log('Successfully saved updated auction');
     
     return res.status(200).json({ success: true });
   } catch (error) {

@@ -1,6 +1,5 @@
-// pages/api/redis-test.ts
+// pages/api/redis-test.ts (Simplified)
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { testRedisConnection } from '../../lib/database';
 import { Redis } from '@upstash/redis';
 
 export default async function handler(
@@ -13,58 +12,54 @@ export default async function handler(
     console.log('UPSTASH_REDIS_REST_URL exists:', !!process.env.UPSTASH_REDIS_REST_URL);
     console.log('UPSTASH_REDIS_REST_TOKEN exists:', !!process.env.UPSTASH_REDIS_REST_TOKEN);
     
-    // First use our database module's test function
-    console.log('Testing Redis connection using database module:');
-    const moduleTestResult = await testRedisConnection();
-    
-    // Then try a direct test for comparison
-    console.log('Testing direct Redis connection:');
-    let directTestResult = false;
-    let directError = null;
-    
+    // Direct Redis test with hardcoded credentials
+    console.log('Testing direct Redis connection with hardcoded credentials:');
     try {
-      // Create Redis instance directly
-      const directRedis = new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL || '',
-        token: process.env.UPSTASH_REDIS_REST_TOKEN || ''
+      // Create Redis instance directly with hardcoded credentials
+      const redis = new Redis({
+        url: 'https://crisp-lacewing-27676.upstash.io',
+        token: 'AWwcAAIjcDEiZDQwNGNmMDZiYWI0MWMzOTU0YjQ1ZDhkNzgyOTdmMXAxMA'
       });
       
       // Test simple operations
       const testKey = 'direct-test';
       const testValue = `direct-${Date.now()}`;
       
-      await directRedis.set(testKey, testValue);
-      const fetchedValue = await directRedis.get(testKey);
-      await directRedis.del(testKey);
+      // Try the set operation
+      console.log('Attempting to set a test value...');
+      await redis.set(testKey, testValue);
+      console.log('Set operation successful');
       
-      directTestResult = fetchedValue === testValue;
-      console.log('Direct Redis test result:', directTestResult ? 'PASSED' : 'FAILED');
+      // Try the get operation
+      console.log('Attempting to get the test value...');
+      const fetchedValue = await redis.get(testKey);
+      console.log('Get operation successful, value:', fetchedValue);
+      
+      // Try the delete operation
+      console.log('Attempting to delete the test value...');
+      await redis.del(testKey);
+      console.log('Delete operation successful');
+      
+      const success = fetchedValue === testValue;
+      console.log('Redis test result:', success ? 'PASSED' : 'FAILED');
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Redis connection successful',
+        test: {
+          setValue: testValue,
+          retrievedValue: fetchedValue,
+          match: success
+        }
+      });
     } catch (error) {
-      directError = error;
       console.error('Direct Redis test failed:', error);
+      return res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        errorObject: JSON.stringify(error, Object.getOwnPropertyNames(error))
+      });
     }
-    
-    // Check for any other Redis-related env vars that might be causing conflicts
-    const redisEnvVars = Object.keys(process.env)
-      .filter(key => key.includes('REDIS') || key.includes('KV'))
-      .map(key => ({
-        name: key,
-        exists: true,
-        // Only show first few characters of the value for security
-        preview: process.env[key] ? `${process.env[key].substring(0, 8)}...` : 'undefined'
-      }));
-    
-    return res.status(200).json({
-      success: moduleTestResult && directTestResult,
-      moduleTest: {
-        success: moduleTestResult
-      },
-      directTest: {
-        success: directTestResult,
-        error: directError ? String(directError) : null
-      },
-      redisEnvVars
-    });
   } catch (error) {
     console.error('Unexpected error in Redis test endpoint:', error);
     return res.status(500).json({
