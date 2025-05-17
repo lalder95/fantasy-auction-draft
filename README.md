@@ -150,12 +150,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [Vercel](https://vercel.com/) for hosting and KV database
 - [Socket.IO](https://socket.io/) for real-time functionality
 
----
-
-## 📸 Screenshots
-
-*Coming soon - add screenshots of your application here*
 
 ---
 
-Made with ❤️ for fantasy football enthusiasts
+Made with ❤️ for fantasy football enthusiasts!
+#BearDown
