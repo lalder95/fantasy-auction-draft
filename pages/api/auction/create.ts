@@ -1,8 +1,8 @@
-// pages/api/auction/create.ts (Enhanced diagnostics)
+// pages/api/auction/create.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuction } from '../../../lib/auction';
 import { getLeagueInfo } from '../../../lib/sleeper';
-import { saveAuction } from '../../../lib/database';
+import { saveAuction } from '../../../lib/database-neon';
 
 export default async function handler(
   req: NextApiRequest,
@@ -69,7 +69,13 @@ export default async function handler(
       await saveAuction(auction);
       console.log('Successfully saved auction to database');
     } catch (saveError) {
-      console.error('Error saving auction to database:', saveError);
+      console.error('Error saving auction to database:', {
+        error: saveError instanceof Error ? saveError.message : String(saveError),
+        stack: saveError instanceof Error ? saveError.stack : undefined,
+        auctionId: auction.id,
+        leagueId,
+        commissionerId
+      });
       return res.status(500).json({ 
         message: 'Failed to save auction to database',
         error: saveError instanceof Error ? saveError.message : String(saveError),
@@ -83,7 +89,12 @@ export default async function handler(
       auctionId: auction.id,
     });
   } catch (error) {
-    console.error('Unexpected error in create auction handler:', error);
+    console.error('Unexpected error in create auction handler:', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      leagueId,
+      commissionerId
+    });
     return res.status(500).json({ 
       message: 'Unexpected error creating auction',
       error: error instanceof Error ? error.message : String(error)
