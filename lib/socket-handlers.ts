@@ -1,6 +1,6 @@
 // lib/socket-handlers.ts
 import { Server as SocketIOServer, Socket } from 'socket.io';
-import { getAuction, saveAuction, validateManagerSession } from './database-neon';
+import { getAuction, saveAuction, validateManagerSession } from './database-vercel';
 import {
   placeBid,
   passOnPlayer,

@@ -718,6 +718,7 @@ export default function AuctionRoom({
                 <div className="mb-1">Status: {connectionStatus}</div>
                 <div className="mb-1">Socket ID: {socket?.id || 'none'}</div>
                 <div className="mb-1">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
+                <div className="mb-1">Transport: {transport}</div>
                 <div className="mb-1">Retry Count: {socketRetryCount}</div>
                 <div className="mb-1">Socket Initialized: {socketInitialized ? 'Yes' : 'No'}</div>
                 <div className="mt-2 font-medium">Recent Debug Messages:</div>

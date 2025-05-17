@@ -2,13 +2,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuction } from '../../../lib/auction';
 import { getLeagueInfo } from '../../../lib/sleeper';
-import { saveAuction } from '../../../lib/database-neon';
+import { saveAuction } from '../../../lib/database-vercel';
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  // Add CORS headers to make debugging easier
+  // Add CORS headers for debugging
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');

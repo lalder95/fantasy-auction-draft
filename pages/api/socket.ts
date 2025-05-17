@@ -32,6 +32,7 @@ export default async function handler(
       const httpServer: NetServer = res.socket.server as any;
       
       // Create IO server with more detailed error logging
+      // Critical change for Vercel: use only polling transport in production
       const io = new ServerIO(httpServer, {
         path: '/api/socket',
         addTrailingSlash: false,
@@ -40,9 +41,12 @@ export default async function handler(
           methods: ['GET', 'POST'],
           credentials: false
         },
-        connectTimeout: 10000, // Increase timeout to 10 seconds
-        pingTimeout: 10000,
-        pingInterval: 5000
+        // Force polling transport on Vercel environment
+        transports: ['polling'],
+        connectTimeout: 20000, // Increase timeout
+        pingTimeout: 20000,
+        pingInterval: 10000,
+        maxHttpBufferSize: 1e8 // 100 MB for larger payloads
       });
       
       // Store IO server instance on the HTTP server object
@@ -51,6 +55,7 @@ export default async function handler(
       // Basic connection setup first
       io.on('connection', (socket) => {
         console.log('Client connected to socket server:', socket.id);
+        console.log('Transport used:', socket.conn.transport.name);
         
         socket.on('disconnect', (reason) => {
           console.log(`Client disconnected: ${socket.id}, reason: ${reason}`);
@@ -58,6 +63,7 @@ export default async function handler(
         
         // Simple ping-pong test event
         socket.on('ping', (callback) => {
+          console.log(`Received ping from ${socket.id}`);
           if (typeof callback === 'function') {
             callback({ status: 'ok', timestamp: Date.now() });
           } else {
