@@ -13,13 +13,15 @@ export default function PlayerSelection({
   onPlayersSelected,
 }: PlayerSelectionProps) {
   const [availablePlayers, setAvailablePlayers] = useState<SleeperPlayer[]>([]);
-  const [selectedPlayers, setSelectedPlayers] = useState<SleeperPlayer[]>([]);
+  const [selectedPlayers, setSelectedPlayers] = useState<SleeperPlayer[]>([]); // Start with empty selection
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [positionFilter, setPositionFilter] = useState<string>('all');
   const [includeRostered, setIncludeRostered] = useState(false);
   const [includeRookiesOnly, setIncludeRookiesOnly] = useState(false);
+  const [hideFreeAgents, setHideFreeAgents] = useState(true); // New state for hiding FA players
+  const [playerLimit] = useState(2000); // Player limit constant
   
   // Fetch players
   useEffect(() => {
@@ -30,9 +32,11 @@ export default function PlayerSelection({
       try {
         const response = await axios.get(`/api/sleeper/players?leagueId=${leagueId}&includeRostered=${includeRostered}`);
         
-        // Set available and selected players
+        // Set available players only (not selected)
         setAvailablePlayers(response.data.players);
-        setSelectedPlayers(response.data.players);
+        
+        // Start with empty selection now, not all players
+        setSelectedPlayers([]);
       } catch (err: any) {
         console.error('Error fetching players:', err);
         setError(err.response?.data?.message || 'Failed to fetch players');
@@ -57,7 +61,10 @@ export default function PlayerSelection({
     // Rookie filter
     const matchesRookie = !includeRookiesOnly || player.years_exp === 0;
     
-    return matchesSearch && matchesPosition && matchesRookie;
+    // Free Agent filter - new!
+    const matchesFreeAgent = !hideFreeAgents || (player.team && player.team !== 'FA');
+    
+    return matchesSearch && matchesPosition && matchesRookie && matchesFreeAgent;
   });
   
   // Filter selected players based on search and filters
@@ -73,11 +80,20 @@ export default function PlayerSelection({
     // Rookie filter
     const matchesRookie = !includeRookiesOnly || player.years_exp === 0;
     
+    // Note: We don't filter selected players by Free Agent status
+    // since they're already selected
+    
     return matchesSearch && matchesPosition && matchesRookie;
   });
   
   // Add all filtered players to selection
   const handleAddAll = () => {
+    // Check if adding would exceed the limit
+    if (selectedPlayers.length + filteredAvailablePlayers.length > playerLimit) {
+      alert(`Cannot add all filtered players. This would exceed the ${playerLimit} player limit.`);
+      return;
+    }
+    
     setSelectedPlayers(prevSelected => {
       // Get IDs of all players currently selected
       const selectedIds = new Set(prevSelected.map(p => p.player_id));
@@ -102,6 +118,12 @@ export default function PlayerSelection({
   
   // Add a single player to selection
   const handleAddPlayer = (player: SleeperPlayer) => {
+    // Check if adding would exceed the limit
+    if (selectedPlayers.length >= playerLimit) {
+      alert(`Cannot add more players. The limit is ${playerLimit} players.`);
+      return;
+    }
+    
     setSelectedPlayers(prevSelected => {
       // Check if player is already selected
       if (prevSelected.some(p => p.player_id === player.player_id)) {
@@ -219,6 +241,27 @@ export default function PlayerSelection({
             Rookies Only
           </label>
         </div>
+        
+        {/* New Free Agents filter */}
+        <div className="flex items-center">
+          <input
+            id="hideFreeAgents"
+            type="checkbox"
+            checked={hideFreeAgents}
+            onChange={(e) => setHideFreeAgents(e.target.checked)}
+            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+          />
+          <label htmlFor="hideFreeAgents" className="ml-2 block text-sm text-gray-900">
+            Hide Free Agents
+          </label>
+        </div>
+      </div>
+      
+      {/* Player count and limit information */}
+      <div className="mb-4 bg-blue-50 p-3 rounded-md border border-blue-200">
+        <p className="text-sm text-blue-800">
+          <span className="font-medium">Selected Players:</span> {selectedPlayers.length} / {playerLimit} maximum
+        </p>
       </div>
       
       <div className="mb-4 flex flex-wrap gap-2">
@@ -282,6 +325,7 @@ export default function PlayerSelection({
                         type="button"
                         onClick={() => handleAddPlayer(player)}
                         className="text-green-600 hover:text-green-900"
+                        disabled={selectedPlayers.length >= playerLimit}
                       >
                         Add
                       </button>
