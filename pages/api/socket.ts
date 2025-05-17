@@ -28,8 +28,8 @@ export default async function handler(
     });
     res.socket.server.io = io;
     
-    // Add event handlers - Load dynamically to ensure latest version
-    const { initSocketHandlers } = await import('../../lib/socket-handlers');
+    // Import socket handlers directly (not dynamically)
+    const { initSocketHandlers } = require('../../lib/socket-handlers');
     initSocketHandlers(io);
 
     console.log('Socket.IO server initialized and handlers attached');

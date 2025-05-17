@@ -1,5 +1,5 @@
 // components/auction/AuctionRoom.tsx
-// Updated to include debugging information and retry socket connection
+// Fixed version with proper null checks for socket
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import io, { Socket } from 'socket.io-client';
@@ -79,73 +79,76 @@ export default function AuctionRoom({
         }
         
         // Socket event handlers
-        socket.on('connect', () => {
-          addDebugMessage(`Socket connected: ${socket?.id}`);
-          setConnectionStatus('connected');
-          socketRetryCount = 0;
+        if (socket) { // Add null check here
+          socket.on('connect', () => {
+            addDebugMessage(`Socket connected: ${socket?.id}`);
+            setConnectionStatus('connected');
+            socketRetryCount = 0;
+            
+            // Join auction room
+            if (socket) { // Add another null check here
+              addDebugMessage(`Sending JOIN_AUCTION: ${auctionId} (${role})`);
+              socket.emit('JOIN_AUCTION', {
+                auctionId,
+                role,
+                sessionId,
+                managerId,
+              });
+            }
+          });
           
-          // Join auction room
-          if (socket) {
-            addDebugMessage(`Sending JOIN_AUCTION: ${auctionId} (${role})`);
-            socket.emit('JOIN_AUCTION', {
-              auctionId,
-              role,
-              sessionId,
-              managerId,
-            });
-          }
-        });
-        
-        socket.on('connect_error', (err) => {
-          addDebugMessage(`Socket connect error: ${err.message}`);
-          setError(`Connection error: ${err.message}`);
+          socket.on('connect_error', (err) => {
+            addDebugMessage(`Socket connect error: ${err.message}`);
+            setError(`Connection error: ${err.message}`);
+            
+            if (socketRetryCount < MAX_RETRIES) {
+              socketRetryCount++;
+              setConnectionStatus('reconnecting');
+            }
+          });
           
-          if (socketRetryCount < MAX_RETRIES) {
-            socketRetryCount++;
+          socket.on('disconnect', (reason) => {
+            addDebugMessage(`Socket disconnected: ${reason}`);
+            setConnectionStatus('disconnected');
+            
+            if (reason === 'io server disconnect' && socket) { // Add null check here
+              // The server has forcefully disconnected the socket
+              socket.connect();
+            }
+          });
+          
+          socket.on('reconnect_attempt', (attemptNumber) => {
+            addDebugMessage(`Socket reconnect attempt: ${attemptNumber}`);
             setConnectionStatus('reconnecting');
-          }
-        });
-        
-        socket.on('disconnect', (reason) => {
-          addDebugMessage(`Socket disconnected: ${reason}`);
-          setConnectionStatus('disconnected');
+          });
           
-          if (reason === 'io server disconnect') {
-            // The server has forcefully disconnected the socket
-            socket.connect();
-          }
-        });
-        
-        socket.on('reconnect_attempt', (attemptNumber) => {
-          addDebugMessage(`Socket reconnect attempt: ${attemptNumber}`);
-          setConnectionStatus('reconnecting');
-        });
-        
-        socket.on('AUCTION_UPDATE', (data) => {
-          addDebugMessage(`Received AUCTION_UPDATE`);
-          setAuction(data);
-          setLoading(false);
-          
-          // If manager role, find current manager
-          if (role === 'manager' && managerId) {
-            const manager = data.managers.find((m: Manager) => m.id === managerId);
-            setCurrentManager(manager || null);
-          }
-        });
-        
-        if (managerId) {
-          socket.on(`AUCTION_UPDATE:${managerId}`, (data) => {
-            addDebugMessage(`Received AUCTION_UPDATE:${managerId}`);
+          socket.on('AUCTION_UPDATE', (data) => {
+            addDebugMessage(`Received AUCTION_UPDATE`);
             setAuction(data);
             setLoading(false);
-            setCurrentManager(data.currentManager || null);
+            
+            // If manager role, find current manager
+            if (role === 'manager' && managerId) {
+              const manager = data.managers.find((m: Manager) => m.id === managerId);
+              setCurrentManager(manager || null);
+            }
+          });
+          
+          if (managerId) {
+            socket.on(`AUCTION_UPDATE:${managerId}`, (data) => {
+              addDebugMessage(`Received AUCTION_UPDATE:${managerId}`);
+              setAuction(data);
+              setLoading(false);
+              setCurrentManager(data.currentManager || null);
+            });
+          }
+          
+          socket.on('ERROR', (data) => {
+            addDebugMessage(`Received ERROR: ${data.message}`);
+            setError(data.message);
           });
         }
         
-        socket.on('ERROR', (data) => {
-          addDebugMessage(`Received ERROR: ${data.message}`);
-          setError(data.message);
-        });
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         addDebugMessage(`Socket initialization error: ${errorMessage}`);
