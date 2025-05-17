@@ -2,7 +2,7 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import type { NextApiRequest } from 'next';
-import { getAuction, saveAuction, validateManagerSession } from './database';
+import { getAuction, saveAuction, validateManagerSession } from './database-neon';
 import {
   placeBid,
   passOnPlayer,

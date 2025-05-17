@@ -1,6 +1,6 @@
 // pages/api/auction/settings.ts (Extremely Simplified)
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAuction, saveAuction } from '../../../lib/database';
+import { getAuction, saveAuction } from '../../../lib/database-neon';
 
 export default async function handler(
   req: NextApiRequest,

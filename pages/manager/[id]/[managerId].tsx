@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import AuctionRoom from '../../../components/auction/AuctionRoom';
-import { createManagerSession } from '../../../lib/database';
+import { createManagerSession } from '../../../lib/database-neon';
 
 export default function ManagerPage() {
   const router = useRouter();

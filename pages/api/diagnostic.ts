@@ -1,70 +1,64 @@
-// pages/api/diagnostic.ts
+// pages/api/diagnostics.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { Redis } from '@upstash/redis';
+import { neon } from '@neondatabase/serverless';
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   try {
-    // Log environment variable existence (not the actual values for security)
-    console.log('Environment variables check:');
-    console.log('UPSTASH_REDIS_REST_URL exists:', !!process.env.UPSTASH_REDIS_REST_URL);
-    console.log('UPSTASH_REDIS_REST_TOKEN exists:', !!process.env.UPSTASH_REDIS_REST_TOKEN);
+    // Check for environment variables
+    const dbUrl = process.env.DATABASE_URL;
     
-    // Attempt to initialize Redis
-    let redis: Redis;
-    try {
-      redis = Redis.fromEnv();
-      console.log('Redis initialized successfully from environment variables');
-    } catch (initError) {
-      console.error('Failed to initialize Redis from environment variables:', initError);
-      return res.status(500).json({
+    // Log environment variable state (safe version)
+    const envInfo = {
+      DATABASE_URL_EXISTS: !!dbUrl,
+      DATABASE_URL_LENGTH: dbUrl?.length || 0,
+      DATABASE_URL_PREFIX: dbUrl?.substring(0, 10) + '...' || 'not set'
+    };
+
+    console.log('Environment variables:', envInfo);
+    
+    // Try to connect and run a simple query
+    if (!dbUrl) {
+      return res.status(400).json({
         success: false,
-        step: 'redis-init',
-        error: initError instanceof Error ? initError.message : String(initError),
-        envVarsExist: {
-          UPSTASH_REDIS_REST_URL: !!process.env.UPSTASH_REDIS_REST_URL,
-          UPSTASH_REDIS_REST_TOKEN: !!process.env.UPSTASH_REDIS_REST_TOKEN
-        }
+        message: 'DATABASE_URL is not set',
+        environment: envInfo
       });
     }
     
-    // Try a simple Redis operation
-    try {
-      const testKey = 'diagnostic:test';
-      const testValue = `test-${Date.now()}`;
-      
-      console.log(`Setting test key: ${testKey} with value: ${testValue}`);
-      await redis.set(testKey, testValue);
-      
-      console.log(`Reading back test key: ${testKey}`);
-      const retrievedValue = await redis.get(testKey);
-      
-      console.log(`Cleaning up test key: ${testKey}`);
-      await redis.del(testKey);
-      
-      return res.status(200).json({
-        success: true,
-        test: 'passed',
-        valueMatches: testValue === retrievedValue,
-        valueSet: testValue,
-        valueRetrieved: retrievedValue
-      });
-    } catch (operationError) {
-      console.error('Redis operation failed:', operationError);
-      return res.status(500).json({
-        success: false,
-        step: 'redis-operation',
-        error: operationError instanceof Error ? operationError.message : String(operationError)
-      });
-    }
+    // Create an SQL client
+    const sql = neon(dbUrl);
+    
+    // Run a simple test query
+    console.log('Attempting to run test query...');
+    const result = await sql`SELECT 1 as test`;
+    console.log('Test query result:', result);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Database connection successful',
+      result: result,
+      environment: envInfo
+    });
   } catch (error) {
-    console.error('Unexpected error in diagnostic endpoint:', error);
+    console.error('Database diagnostic error:', error);
+    
+    // Return detailed error information
     return res.status(500).json({
       success: false,
-      step: 'unexpected',
-      error: error instanceof Error ? error.message : String(error)
+      message: 'Database connection failed',
+      error: error instanceof Error ? {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      } : String(error),
+      environment: {
+        DATABASE_URL_EXISTS: !!process.env.DATABASE_URL,
+        DATABASE_URL_LENGTH: process.env.DATABASE_URL?.length || 0,
+        DATABASE_URL_PREFIX: process.env.DATABASE_URL?.substring(0, 10) + '...' || 'not set'
+      }
     });
   }
 }

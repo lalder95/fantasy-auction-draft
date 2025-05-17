@@ -1,6 +1,6 @@
 // pages/api/auction/start.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAuction, saveAuction } from '../../../lib/database';
+import { getAuction, saveAuction } from '../../../lib/database-neon';
 import { startAuction } from '../../../lib/auction';
 
 export default async function handler(

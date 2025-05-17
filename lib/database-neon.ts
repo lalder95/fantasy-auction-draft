@@ -1,5 +1,5 @@
 // lib/database-neon.ts
-import { neon, neonConfig } from '@neondatabase/serverless';
+import { neon } from '@neondatabase/serverless';
 import { Auction, Manager, PlayerUp } from './auction';
 import { v4 as uuidv4 } from 'uuid';
 import { SleeperPlayer } from './sleeper';
@@ -18,16 +18,36 @@ export async function saveAuction(auction: Auction): Promise<void> {
   try {
     console.log(`Saving auction with ID: ${auction.id}`);
     
-    // Upsert auction
-    await sql`
-      INSERT INTO auctions (id, created_at, status, commissioner_id, current_nomination_manager_index, settings)
-      VALUES (${auction.id}, to_timestamp(${auction.createdAt}/1000), ${auction.status}, ${auction.commissionerId}, ${auction.currentNominationManagerIndex}, ${JSON.stringify(auction.settings)})
-      ON CONFLICT (id) DO UPDATE SET
-        status = ${auction.status},
-        commissioner_id = ${auction.commissionerId},
-        current_nomination_manager_index = ${auction.currentNominationManagerIndex},
-        settings = ${JSON.stringify(auction.settings)}
+    // Start by checking if auction exists
+    const existingAuction = await sql`
+      SELECT id FROM auctions WHERE id = ${auction.id}
     `;
+    
+    const auctionExists = existingAuction.length > 0;
+    
+    // Upsert auction
+    if (auctionExists) {
+      await sql`
+        UPDATE auctions SET
+          status = ${auction.status},
+          commissioner_id = ${auction.commissionerId},
+          current_nomination_manager_index = ${auction.currentNominationManagerIndex},
+          settings = ${JSON.stringify(auction.settings)}
+        WHERE id = ${auction.id}
+      `;
+    } else {
+      await sql`
+        INSERT INTO auctions (id, created_at, status, commissioner_id, current_nomination_manager_index, settings)
+        VALUES (
+          ${auction.id}, 
+          to_timestamp(${auction.createdAt}/1000), 
+          ${auction.status}, 
+          ${auction.commissionerId}, 
+          ${auction.currentNominationManagerIndex}, 
+          ${JSON.stringify(auction.settings)}
+        )
+      `;
+    }
     
     // Delete existing related data
     await sql`DELETE FROM managers WHERE auction_id = ${auction.id}`;
@@ -38,8 +58,21 @@ export async function saveAuction(auction: Auction): Promise<void> {
     // Insert managers
     for (const manager of auction.managers) {
       await sql`
-        INSERT INTO managers (id, auction_id, name, roster_id, avatar, budget, initial_budget, nomination_order, won_players)
-        VALUES (${manager.id}, ${auction.id}, ${manager.name}, ${manager.rosterId}, ${manager.avatar || null}, ${manager.budget}, ${manager.initialBudget}, ${manager.nominationOrder}, ${JSON.stringify(manager.wonPlayers)})
+        INSERT INTO managers (
+          id, auction_id, name, roster_id, avatar, 
+          budget, initial_budget, nomination_order, won_players
+        )
+        VALUES (
+          ${manager.id},
+          ${auction.id},
+          ${manager.name},
+          ${manager.rosterId},
+          ${manager.avatar || null},
+          ${manager.budget},
+          ${manager.initialBudget},
+          ${manager.nominationOrder},
+          ${JSON.stringify(manager.wonPlayers)}
+        )
       `;
     }
     
@@ -52,10 +85,20 @@ export async function saveAuction(auction: Auction): Promise<void> {
           start_time, end_time, status, nomination_index
         )
         VALUES (
-          ${`${auction.id}-${player.playerId}`}, ${auction.id}, ${player.playerId}, ${player.name}, 
-          ${player.position}, ${player.team}, ${player.nominatedBy}, ${player.currentBid}, 
-          ${player.currentBidder || null}, ${JSON.stringify(player.passes)}, 
-          ${player.startTime}, ${player.endTime}, ${player.status}, ${player.nominationIndex}
+          ${`${auction.id}-${player.playerId}`},
+          ${auction.id},
+          ${player.playerId},
+          ${player.name},
+          ${player.position},
+          ${player.team},
+          ${player.nominatedBy},
+          ${player.currentBid},
+          ${player.currentBidder || null},
+          ${JSON.stringify(player.passes)},
+          ${player.startTime},
+          ${player.endTime},
+          ${player.status},
+          ${player.nominationIndex}
         )
       `;
     }
@@ -68,9 +111,14 @@ export async function saveAuction(auction: Auction): Promise<void> {
           final_bid, winner
         )
         VALUES (
-          ${`${auction.id}-${player.playerId}`}, ${auction.id}, ${player.playerId}, 
-          ${player.name}, ${player.position}, ${player.team}, 
-          ${player.finalBid}, ${player.winner}
+          ${`${auction.id}-${player.playerId}`},
+          ${auction.id},
+          ${player.playerId},
+          ${player.name},
+          ${player.position},
+          ${player.team},
+          ${player.finalBid},
+          ${player.winner}
         )
       `;
     }
@@ -82,7 +130,10 @@ export async function saveAuction(auction: Auction): Promise<void> {
           id, auction_id, player_id, player_data
         )
         VALUES (
-          ${`${auction.id}-${player.player_id}`}, ${auction.id}, ${player.player_id}, ${JSON.stringify(player)}
+          ${`${auction.id}-${player.player_id}`},
+          ${auction.id},
+          ${player.player_id},
+          ${JSON.stringify(player)}
         )
       `;
     }
@@ -150,23 +201,25 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
       nominationIndex: p.nomination_index,
     }));
     
-    // This needs to be cast properly to match the expected type
     const mappedCompletedPlayers = completedPlayers.map(p => ({
-      playerId: p.player_id,
-      name: p.name,
-      position: p.position,
-      team: p.team,
-      nominatedBy: p.nominated_by || '',
-      currentBid: p.final_bid,
-      currentBidder: p.winner,
-      passes: [],
-      startTime: 0,
-      endTime: 0,
-      status: 'completed' as const,
-      nominationIndex: 0,
-      finalBid: p.final_bid,
-      winner: p.winner,
-    })) as (PlayerUp & { finalBid: number; winner: string; })[];
+        // These properties are already included
+        playerId: p.player_id,
+        name: p.name,
+        position: p.position,
+        team: p.team,
+        finalBid: p.final_bid,
+        winner: p.winner,
+        
+        // These additional properties are needed to match the PlayerUp type
+        nominatedBy: p.winner, // Using winner as nominator since we don't store this
+        currentBid: p.final_bid, // Using final bid as the current bid
+        currentBidder: p.winner, // Using winner as current bidder
+        passes: [], // Empty array since the auction is completed
+        startTime: 0, // Default value since we don't store this for completed auctions
+        endTime: 0, // Default value since we don't store this for completed auctions
+        status: 'completed' as 'active' | 'completed' | 'cancelled',
+        nominationIndex: 0, // Default value since we don't store this for completed auctions
+      }));
     
     const mappedAvailablePlayers: SleeperPlayer[] = availablePlayers.map(p => 
       JSON.parse(p.player_data)
@@ -175,7 +228,7 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
     // Build complete auction object
     const auction: Auction = {
       id: auctionData.id,
-      createdAt: new Date(auctionData.created_at).getTime(),
+      createdAt: auctionData.created_at.getTime(),
       status: auctionData.status as 'setup' | 'active' | 'paused' | 'completed',
       commissionerId: auctionData.commissioner_id,
       currentNominationManagerIndex: auctionData.current_nomination_manager_index,
@@ -291,7 +344,9 @@ export async function getCommissionerAuctions(commissionerId: string): Promise<A
   try {
     console.log(`Fetching auctions for commissioner: ${commissionerId}`);
     
-    const auctionResults = await sql`SELECT id FROM auctions WHERE commissioner_id = ${commissionerId}`;
+    const auctionResults = await sql`
+      SELECT id FROM auctions WHERE commissioner_id = ${commissionerId}
+    `;
     
     if (auctionResults.length === 0) {
       console.log(`No auctions found for commissioner: ${commissionerId}`);
@@ -321,8 +376,8 @@ export async function getCommissionerAuctions(commissionerId: string): Promise<A
 export async function testDatabaseConnection(): Promise<boolean> {
   try {
     // Simple connection test
-    await sql`SELECT 1 as test`;
-    console.log('Database connection test: PASSED');
+    const result = await sql`SELECT 1 as test`;
+    console.log('Database connection test: PASSED', result);
     return true;
   } catch (error) {
     console.error('Database connection test failed:', error);
