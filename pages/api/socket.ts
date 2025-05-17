@@ -21,16 +21,20 @@ export default async function handler(
     const io = new ServerIO(httpServer, {
       path: '/api/socket',
       addTrailingSlash: false,
+      cors: {
+        origin: '*',
+        methods: ['GET', 'POST'],
+      },
     });
     res.socket.server.io = io;
     
-    // Add event handlers
-    io.on('connection', (socket) => {
-      console.log('Socket connected:', socket.id);
-      
-      // Add socket event handlers here - similar to lib/socket.ts
-      // but simplified for API route context
-    });
+    // Add event handlers - Load dynamically to ensure latest version
+    const { initSocketHandlers } = await import('../../lib/socket-handlers');
+    initSocketHandlers(io);
+
+    console.log('Socket.IO server initialized and handlers attached');
+  } else {
+    console.log('Socket.IO server already running');
   }
   
   res.end();
