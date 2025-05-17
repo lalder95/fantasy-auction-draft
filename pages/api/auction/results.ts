@@ -1,6 +1,6 @@
 // pages/api/auction/results.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAuction } from '../../../lib/database';
+import { getAuction } from '../../../lib/database-neon';
 import { getAuctionResults } from '../../../lib/auction';
 import { sendAuctionResults } from '../../../lib/email';
 

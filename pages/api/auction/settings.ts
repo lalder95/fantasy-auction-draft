@@ -1,4 +1,4 @@
-// pages/api/auction/settings.ts (Extremely Simplified)
+// pages/api/auction/settings.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAuction, saveAuction } from '../../../lib/database-neon';
 

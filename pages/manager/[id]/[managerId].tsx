@@ -1,4 +1,4 @@
-// pages/manager/[id]/[managerId].tsx - Fixed props
+// pages/manager/[id]/[managerId].tsx
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
