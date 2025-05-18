@@ -1,10 +1,10 @@
-// lib/database-neon.ts - Improved Error Handling
+// lib/database-neon.ts - Updated with better related data handling
 import { neon } from '@neondatabase/serverless';
 import { Auction, Manager, PlayerUp } from './auction';
 import { v4 as uuidv4 } from 'uuid';
 import { SleeperPlayer } from './sleeper';
 
-// Create a SQL client - handle missing DATABASE_URL gracefully
+// Create a SQL client
 let sql: any;
 try {
   const dbUrl = process.env.DATABASE_URL;
@@ -20,11 +20,11 @@ try {
   // Will use in-memory storage fallback below
 }
 
-// In-memory fallback storage for development/testing when DB connection fails
+// In-memory fallback storage
 const inMemoryStorage: Record<string, any> = {};
 
 /**
- * Save auction to database with fallback
+ * Save auction to database with improved related data handling
  */
 export async function saveAuction(auction: Auction): Promise<void> {
   if (!auction || !auction.id) {
@@ -37,7 +37,10 @@ export async function saveAuction(auction: Auction): Promise<void> {
       console.log(`Saving auction with ID: ${auction.id} to database`);
       
       try {
-        // Attempt to use database first
+        // Start transaction
+        await sql`BEGIN`;
+        
+        // 1. Save the main auction record
         await sql`
           INSERT INTO auctions (
             id, created_at, status, commissioner_id, 
@@ -58,15 +61,143 @@ export async function saveAuction(auction: Auction): Promise<void> {
             settings = ${JSON.stringify(auction.settings)}
         `;
         
-        console.log(`Successfully saved auction ${auction.id} to database`);
+        // 2. Save managers - First delete existing, then insert new
+        await sql`DELETE FROM managers WHERE auction_id = ${auction.id}`;
+        
+        if (auction.managers && auction.managers.length > 0) {
+          for (const manager of auction.managers) {
+            await sql`
+              INSERT INTO managers (
+                id, auction_id, name, roster_id, budget, initial_budget, nomination_order
+              )
+              VALUES (
+                ${manager.id},
+                ${auction.id},
+                ${manager.name},
+                ${manager.rosterId},
+                ${manager.budget},
+                ${manager.initialBudget},
+                ${manager.nominationOrder}
+              )
+            `;
+            
+            // Save won players for this manager
+            if (manager.wonPlayers && manager.wonPlayers.length > 0) {
+              for (const playerId of manager.wonPlayers) {
+                await sql`
+                  INSERT INTO manager_won_players (manager_id, player_id)
+                  VALUES (${manager.id}, ${playerId})
+                  ON CONFLICT (manager_id, player_id) DO NOTHING
+                `;
+              }
+            }
+          }
+        }
+        
+        // 3. Save available players
+        await sql`DELETE FROM available_players WHERE auction_id = ${auction.id}`;
+        
+        if (auction.availablePlayers && auction.availablePlayers.length > 0) {
+          for (const player of auction.availablePlayers) {
+            await sql`
+              INSERT INTO available_players (
+                player_id, auction_id, full_name, position, team, years_exp
+              )
+              VALUES (
+                ${player.player_id},
+                ${auction.id},
+                ${player.full_name},
+                ${player.position},
+                ${player.team || null},
+                ${player.years_exp || 0}
+              )
+            `;
+          }
+        }
+        
+        // 4. Save players up for auction
+        await sql`DELETE FROM players_up WHERE auction_id = ${auction.id}`;
+        
+        if (auction.playersUp && auction.playersUp.length > 0) {
+          for (const playerUp of auction.playersUp) {
+            await sql`
+              INSERT INTO players_up (
+                player_id, auction_id, name, position, team,
+                nominated_by, current_bid, current_bidder,
+                start_time, end_time, status, nomination_index
+              )
+              VALUES (
+                ${playerUp.playerId},
+                ${auction.id},
+                ${playerUp.name},
+                ${playerUp.position},
+                ${playerUp.team},
+                ${playerUp.nominatedBy},
+                ${playerUp.currentBid},
+                ${playerUp.currentBidder || null},
+                to_timestamp(${playerUp.startTime/1000}),
+                to_timestamp(${playerUp.endTime/1000}),
+                ${playerUp.status},
+                ${playerUp.nominationIndex}
+              )
+            `;
+            
+            // Save passes for this player
+            if (playerUp.passes && playerUp.passes.length > 0) {
+              for (const managerId of playerUp.passes) {
+                await sql`
+                  INSERT INTO player_passes (player_id, manager_id)
+                  VALUES (${playerUp.playerId}, ${managerId})
+                  ON CONFLICT (player_id, manager_id) DO NOTHING
+                `;
+              }
+            }
+          }
+        }
+        
+        // 5. Save completed players
+        await sql`DELETE FROM completed_players WHERE auction_id = ${auction.id}`;
+        
+        if (auction.completedPlayers && auction.completedPlayers.length > 0) {
+          for (const player of auction.completedPlayers) {
+            await sql`
+              INSERT INTO completed_players (
+                player_id, auction_id, name, position, team,
+                nominated_by, final_bid, winner,
+                start_time, end_time, status, nomination_index
+              )
+              VALUES (
+                ${player.playerId},
+                ${auction.id},
+                ${player.name},
+                ${player.position},
+                ${player.team},
+                ${player.nominatedBy},
+                ${player.finalBid},
+                ${player.winner},
+                to_timestamp(${player.startTime/1000}),
+                to_timestamp(${player.endTime/1000}),
+                ${player.status},
+                ${player.nominationIndex}
+              )
+            `;
+          }
+        }
+        
+        // Commit transaction
+        await sql`COMMIT`;
+        
+        console.log(`Successfully saved auction ${auction.id} and all related data to database`);
         return;
       } catch (dbError) {
+        // Rollback on error
+        await sql`ROLLBACK`;
         console.error(`Database save failed for auction ${auction.id}, using in-memory fallback:`, dbError);
         // Continue to fallback below
       }
     }
     
-    // Fallback to in-memory storage if database failed or not available
+    // Fallback to in-memory storage
     console.log(`Saving auction with ID: ${auction.id} to in-memory storage`);
     inMemoryStorage[`auction:${auction.id}`] = JSON.stringify(auction);
     console.log(`Successfully saved auction ${auction.id} to in-memory storage`);
@@ -78,7 +209,7 @@ export async function saveAuction(auction: Auction): Promise<void> {
 }
 
 /**
- * Get auction from database with fallback
+ * Get auction from database with improved related data handling
  */
 export async function getAuction(auctionId: string): Promise<Auction | null> {
   if (!auctionId) {
@@ -91,29 +222,122 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
       console.log(`Fetching auction with ID: ${auctionId} from database`);
       
       try {
-        // Try database first
-        const auctionResult = await sql`SELECT * FROM auctions WHERE id = ${auctionId}`;
+        // 1. Get main auction record
+        const auctionResults = await sql`SELECT * FROM auctions WHERE id = ${auctionId}`;
         
-        if (auctionResult && auctionResult.length > 0) {
-          const auctionData = auctionResult[0];
+        if (!auctionResults || auctionResults.length === 0) {
+          console.log(`No auction found with ID: ${auctionId} in database`);
+          // Try in-memory fallback
+        } else {
+          const auctionData = auctionResults[0];
           
-          // For troubleshooting, return a minimal auction object
+          // 2. Get managers
+          const managersResults = await sql`SELECT * FROM managers WHERE auction_id = ${auctionId} ORDER BY nomination_order`;
+          const managers: Manager[] = [];
+          
+          for (const managerRow of managersResults) {
+            // Get won players for this manager
+            const wonPlayersResults = await sql`
+              SELECT player_id FROM manager_won_players WHERE manager_id = ${managerRow.id}
+            `;
+            
+            const wonPlayers = wonPlayersResults.map((row: any) => row.player_id);
+            
+            managers.push({
+              id: managerRow.id,
+              name: managerRow.name,
+              rosterId: managerRow.roster_id,
+              budget: managerRow.budget,
+              initialBudget: managerRow.initial_budget,
+              wonPlayers,
+              nominationOrder: managerRow.nomination_order,
+              avatar: managerRow.avatar
+            });
+          }
+          
+          // 3. Get available players
+          const availablePlayersResults = await sql`
+            SELECT * FROM available_players WHERE auction_id = ${auctionId}
+          `;
+          
+          const availablePlayers: SleeperPlayer[] = availablePlayersResults.map((row: any) => ({
+            player_id: row.player_id,
+            full_name: row.full_name,
+            position: row.position,
+            team: row.team,
+            years_exp: row.years_exp
+          }));
+          
+          // 4. Get players up for auction
+          const playersUpResults = await sql`
+            SELECT * FROM players_up WHERE auction_id = ${auctionId}
+          `;
+          
+          const playersUp: PlayerUp[] = [];
+          
+          for (const playerRow of playersUpResults) {
+            // Get passes for this player
+            const passesResults = await sql`
+              SELECT manager_id FROM player_passes WHERE player_id = ${playerRow.player_id}
+            `;
+            
+            const passes = passesResults.map((row: any) => row.manager_id);
+            
+            playersUp.push({
+              playerId: playerRow.player_id,
+              name: playerRow.name,
+              position: playerRow.position,
+              team: playerRow.team,
+              nominatedBy: playerRow.nominated_by,
+              currentBid: playerRow.current_bid,
+              currentBidder: playerRow.current_bidder,
+              passes,
+              startTime: new Date(playerRow.start_time).getTime(),
+              endTime: new Date(playerRow.end_time).getTime(),
+              status: playerRow.status,
+              nominationIndex: playerRow.nomination_index
+            });
+          }
+          
+          // 5. Get completed players
+          const completedPlayersResults = await sql`
+            SELECT * FROM completed_players WHERE auction_id = ${auctionId}
+          `;
+          
+          const completedPlayers = completedPlayersResults.map((row: any) => ({
+            playerId: row.player_id,
+            name: row.name,
+            position: row.position,
+            team: row.team,
+            nominatedBy: row.nominated_by,
+            currentBid: row.final_bid,
+            currentBidder: row.winner,
+            finalBid: row.final_bid,
+            winner: row.winner,
+            passes: [],
+            startTime: new Date(row.start_time).getTime(),
+            endTime: new Date(row.end_time).getTime(),
+            status: row.status,
+            nominationIndex: row.nomination_index
+          }));
+          
+          // Construct complete auction object
           const auction: Auction = {
             id: auctionData.id,
             createdAt: new Date(auctionData.created_at).getTime(),
-            status: auctionData.status as 'setup' | 'active' | 'paused' | 'completed',
+            status: auctionData.status,
             commissionerId: auctionData.commissioner_id,
             currentNominationManagerIndex: auctionData.current_nomination_manager_index,
             settings: typeof auctionData.settings === 'string' 
               ? JSON.parse(auctionData.settings) 
               : auctionData.settings,
-            managers: [],
-            playersUp: [],
-            completedPlayers: [],
-            availablePlayers: [],
+            managers,
+            availablePlayers,
+            playersUp,
+            completedPlayers
           };
           
-          console.log(`Successfully retrieved auction: ${auctionId} from database`);
+          console.log(`Successfully fetched auction ${auctionId} from database`);
           return auction;
         }
       } catch (dbError) {
@@ -122,7 +346,7 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
       }
     }
     
-    // Fallback to in-memory storage if database failed or not available
+    // Fallback to in-memory storage
     console.log(`Fetching auction with ID: ${auctionId} from in-memory storage`);
     const auctionStr = inMemoryStorage[`auction:${auctionId}`];
     
@@ -141,7 +365,7 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
 }
 
 /**
- * Create a session for a manager with fallback
+ * Create a session for a manager
  */
 export async function createManagerSession(
   auctionId: string,
@@ -191,7 +415,7 @@ export async function createManagerSession(
 }
 
 /**
- * Validate manager session with fallback
+ * Validate manager session
  */
 export async function validateManagerSession(
   sessionId: string,
