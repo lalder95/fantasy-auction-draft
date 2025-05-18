@@ -1,4 +1,4 @@
-// pages/api/auction/players.ts - Robust version with better error handling
+// pages/api/auction/players.ts - Simple approach with string cleaning
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { neon } from '@neondatabase/serverless';
 
@@ -38,19 +38,41 @@ export default async function handler(
     const sql = neon(process.env.DATABASE_URL || '');
     
     // Verify auction exists
-    const auctionResult = await sql`SELECT id FROM auctions WHERE id = ${auctionId}`;
+    const auctionExists = await sql`SELECT EXISTS(SELECT 1 FROM auctions WHERE id = ${auctionId})`;
     
-    if (!auctionResult || auctionResult.length === 0) {
+    if (!auctionExists || !auctionExists[0] || !auctionExists[0].exists) {
       return res.status(404).json({ message: 'Auction not found' });
     }
     
     console.log(`Processing ${availablePlayers.length} players for auction ${auctionId}`);
     
-    // Clear existing players for this auction
+    // Try to save a sample player first to test DB connection
+    try {
+      const testPlayer = {
+        player_id: 'test-player',
+        full_name: 'Test Player',
+        position: 'QB',
+        team: 'TEST',
+        years_exp: 0
+      };
+      
+      await sql`
+        INSERT INTO available_players (player_id, auction_id, full_name, position, team, years_exp)
+        VALUES (${testPlayer.player_id}, ${auctionId}, ${testPlayer.full_name}, ${testPlayer.position}, ${testPlayer.team}, ${testPlayer.years_exp})
+        ON CONFLICT DO NOTHING
+      `;
+      
+      console.log('Test player insertion successful');
+    } catch (testError) {
+      console.error('Test player insertion failed:', testError);
+      // Continue anyway to try the batch process
+    }
+    
+    // Clear existing players
     await sql`DELETE FROM available_players WHERE auction_id = ${auctionId}`;
     
-    // Process in smaller batches
-    const BATCH_SIZE = 25; // Smaller batch size for safety
+    // Process in very small batches
+    const BATCH_SIZE = 10; 
     let successCount = 0;
     let errorCount = 0;
     let lastError = null;
@@ -62,72 +84,54 @@ export default async function handler(
       
       console.log(`Processing batch ${batchNum}/${totalBatches} (${batch.length} players)`);
       
-      // For each player in the batch, do individual inserts with explicit type casting
-      for (let j = 0; j < batch.length; j++) {
+      // Process each player individually
+      for (const player of batch) {
         try {
-          const player = batch[j];
-          
-          // Validate player has required fields
+          // Skip invalid players
           if (!player || !player.player_id) {
-            console.warn(`Skipping invalid player at index ${i + j}`);
             errorCount++;
             continue;
           }
           
-          // Use parameterized SQL with explicit type casting
+          // Clean up data to ensure correct types
+          const playerId = String(player.player_id);
+          const fullName = String(player.full_name || 'Unknown Player');
+          const position = String(player.position || 'UNKNOWN');
+          const team = player.team ? String(player.team) : null;
+          const yearsExp = Number(player.years_exp || 0);
+          
+          // Insert with simple values
           await sql`
-            INSERT INTO available_players (
-              player_id, 
-              auction_id, 
-              full_name, 
-              position, 
-              team, 
-              years_exp
-            )
-            VALUES (
-              ${player.player_id}::text, 
-              ${auctionId}::text, 
-              ${player.full_name || 'Unknown Player'}::text, 
-              ${player.position || 'UNKNOWN'}::text, 
-              ${player.team || null}::text, 
-              ${typeof player.years_exp === 'number' ? player.years_exp : 0}::integer
-            )
+            INSERT INTO available_players (player_id, auction_id, full_name, position, team, years_exp)
+            VALUES (${playerId}, ${auctionId}, ${fullName}, ${position}, ${team}, ${yearsExp})
             ON CONFLICT (player_id, auction_id) DO UPDATE SET
-              full_name = EXCLUDED.full_name,
-              position = EXCLUDED.position,
-              team = EXCLUDED.team,
-              years_exp = EXCLUDED.years_exp
+              full_name = ${fullName},
+              position = ${position},
+              team = ${team},
+              years_exp = ${yearsExp}
           `;
           
           successCount++;
         } catch (playerError) {
-          // Log the error but continue with other players
-          console.error(`Error inserting player at index ${i + j}:`, playerError);
-          console.error('Problematic player data:', JSON.stringify(batch[j]));
-          lastError = playerError;
+          console.error('Error inserting player:', playerError);
+          console.error('Problem player:', JSON.stringify(player));
           errorCount++;
+          lastError = playerError;
         }
       }
       
+      // Log progress
       console.log(`Completed batch ${batchNum}/${totalBatches}: ${successCount} successful, ${errorCount} errors`);
     }
     
-    // Update auction with player count even if some failed
-    if (successCount > 0) {
-      await sql`
-        UPDATE auctions 
-        SET settings = settings || jsonb_build_object('availablePlayersCount', ${successCount})
-        WHERE id = ${auctionId}
-      `;
-    }
+    console.log(`Player insertion complete. Total: ${successCount} successful, ${errorCount} errors`);
     
-    // Return success with detailed counts
     return res.status(200).json({
       success: true,
-      message: `Processed ${successCount + errorCount} players: ${successCount} successful, ${errorCount} errors`,
+      message: `Processed ${availablePlayers.length} players: ${successCount} successful, ${errorCount} errors`,
       successCount,
       errorCount,
-      lastError: lastError ? (lastError instanceof Error ? lastError.message : String(lastError)) : null
+      lastError: lastError ? String(lastError) : null
     });
   } catch (error) {
     console.error('Error updating available players:', error);
