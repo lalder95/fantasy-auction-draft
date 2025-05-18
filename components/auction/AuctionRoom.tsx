@@ -1,5 +1,4 @@
 // components/auction/AuctionRoom.tsx
-// Updated with robust connection handling
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import io, { Socket } from 'socket.io-client';
@@ -51,7 +50,7 @@ export default function AuctionRoom({
   const testConnection = useCallback(async () => {
     try {
       addDebugMessage("Testing API endpoint connection...");
-      const response = await fetch('/api/socket', { 
+      const response = await fetch('/api/socket-test', { 
         method: 'GET',
         headers: {
           'Accept': 'application/json',
@@ -100,7 +99,7 @@ export default function AuctionRoom({
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
           reconnectionDelayMax: 5000,
-          timeout: 10000,
+          timeout: 20000,
           forceNew: true, // Force a new connection
           autoConnect: true, // Start connection automatically
           transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
@@ -173,6 +172,14 @@ export default function AuctionRoom({
               setCurrentManager(manager || null);
             }
           });
+
+          socket.on('JOIN_CONFIRMATION', (data) => {
+            addDebugMessage(`Received JOIN_CONFIRMATION for auction: ${data.auctionId}`);
+            // Fetch auction data if not already received
+            if (!auction && socket) {
+              socket.emit('REQUEST_AUCTION_DATA', { auctionId });
+            }
+          });
           
           if (managerId) {
             socket.on(`AUCTION_UPDATE:${managerId}`, (data) => {
@@ -228,6 +235,7 @@ export default function AuctionRoom({
         }
         socket.off('ERROR');
         socket.off('pong');
+        socket.off('JOIN_CONFIRMATION');
         
         // Disconnect socket
         socket.disconnect();
@@ -235,7 +243,7 @@ export default function AuctionRoom({
         setSocketInitialized(false);
       }
     };
-  }, [auctionId, role, managerId, sessionId, socketInitialized, testConnection]);
+  }, [auctionId, role, managerId, sessionId, socketInitialized, testConnection, auction]);
   
   // Determine if current manager can nominate
   const canNominate = useCallback(() => {
@@ -264,7 +272,7 @@ export default function AuctionRoom({
       bidAmount,
       managerId: role === 'commissioner' ? undefined : managerId,
     });
-  }, [role, managerId]);
+  }, [role, managerId, addDebugMessage]);
   
   // Pass on player
   const handlePass = useCallback((playerId: string) => {
@@ -278,7 +286,7 @@ export default function AuctionRoom({
       playerId,
       managerId: role === 'commissioner' ? undefined : managerId,
     });
-  }, [role, managerId]);
+  }, [role, managerId, addDebugMessage]);
   
   // Nominate player
   const handleNominate = useCallback((playerId: string, startingBid: number) => {
@@ -293,7 +301,7 @@ export default function AuctionRoom({
       startingBid,
       managerId: role === 'commissioner' ? undefined : managerId,
     });
-  }, [role, managerId]);
+  }, [role, managerId, addDebugMessage]);
   
   // Commissioner specific handlers
   const handlePauseAuction = useCallback(() => {
@@ -304,7 +312,7 @@ export default function AuctionRoom({
     
     addDebugMessage(`Sending PAUSE_AUCTION`);
     socket.emit('PAUSE_AUCTION');
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleResumeAuction = useCallback(() => {
     if (!socket || role !== 'commissioner') {
@@ -314,7 +322,7 @@ export default function AuctionRoom({
     
     addDebugMessage(`Sending RESUME_AUCTION`);
     socket.emit('RESUME_AUCTION');
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleEndAuction = useCallback(() => {
     if (!socket || role !== 'commissioner') {
@@ -324,7 +332,7 @@ export default function AuctionRoom({
     
     addDebugMessage(`Sending END_AUCTION`);
     socket.emit('END_AUCTION');
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleUpdateManagerBudget = useCallback((managerId: string, newBudget: number) => {
     if (!socket || role !== 'commissioner') {
@@ -337,7 +345,7 @@ export default function AuctionRoom({
       managerId,
       newBudget,
     });
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleNominateForManager = useCallback((playerId: string, startingBid: number, managerId: string) => {
     if (!socket || role !== 'commissioner') {
@@ -351,7 +359,7 @@ export default function AuctionRoom({
       startingBid,
       managerId,
     });
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleAdjustTime = useCallback((playerId: string, secondsToAdjust: number) => {
     if (!socket || role !== 'commissioner') {
@@ -364,7 +372,7 @@ export default function AuctionRoom({
       playerId,
       secondsToAdjust,
     });
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleRemovePlayer = useCallback((playerId: string) => {
     if (!socket || role !== 'commissioner') {
@@ -376,7 +384,7 @@ export default function AuctionRoom({
     socket.emit('REMOVE_PLAYER', {
       playerId,
     });
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleCancelBid = useCallback((playerId: string) => {
     if (!socket || role !== 'commissioner') {
@@ -388,7 +396,7 @@ export default function AuctionRoom({
     socket.emit('CANCEL_BID', {
       playerId,
     });
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   const handleBidForManager = useCallback((playerId: string, bidAmount: number, managerId: string) => {
     if (!socket || role !== 'commissioner') {
@@ -402,7 +410,7 @@ export default function AuctionRoom({
       bidAmount,
       managerId,
     });
-  }, [role]);
+  }, [role, addDebugMessage]);
   
   // Manual retry connection button handler
   const handleRetryConnection = () => {

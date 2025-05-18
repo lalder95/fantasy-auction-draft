@@ -25,6 +25,15 @@ export default async function handler(
     return;
   }
 
+  // Handle test GET request
+  if (req.method === 'GET') {
+    return res.status(200).json({ 
+      status: "ok", 
+      message: "Socket.io API endpoint is running",
+      timestamp: new Date().toISOString()
+    });
+  }
+
   try {
     if (!res.socket.server.io) {
       console.log('New Socket.io server initializing...');
@@ -40,8 +49,8 @@ export default async function handler(
           methods: ['GET', 'POST'],
           credentials: false
         },
-        connectTimeout: 10000, // Increase timeout to 10 seconds
-        pingTimeout: 10000,
+        connectTimeout: 20000, // Increase timeout to 20 seconds
+        pingTimeout: 20000,
         pingInterval: 5000
       });
       
@@ -63,6 +72,18 @@ export default async function handler(
           } else {
             socket.emit('pong', { status: 'ok', timestamp: Date.now() });
           }
+        });
+
+        // Handle JOIN_AUCTION message
+        socket.on('JOIN_AUCTION', (data) => {
+          console.log(`Socket ${socket.id} joining auction room: ${data.auctionId}`);
+          socket.join(data.auctionId);
+          
+          // Acknowledge join
+          socket.emit('JOIN_CONFIRMATION', { 
+            status: 'ok', 
+            auctionId: data.auctionId 
+          });
         });
       });
       

@@ -12,6 +12,10 @@ export default async function handler(
       VERCEL_ENV: process.env.VERCEL_ENV || 'development',
       VERCEL_URL: process.env.VERCEL_URL || 'localhost',
       VERCEL_REGION: process.env.VERCEL_REGION || 'local',
+      
+      // Database connection info (masked)
+      DB_CONNECTION: process.env.DATABASE_URL ? 'Set' : 'Not Set',
+      UPSTASH_REDIS: process.env.UPSTASH_REDIS_REST_URL ? 'Set' : 'Not Set'
     };
 
     // System information
@@ -25,13 +29,13 @@ export default async function handler(
     // Return socket configuration details for client debugging
     return res.status(200).json({
       success: true,
-      message: 'Socket diagnostic endpoint is running correctly',
+      message: 'Socket API diagnostic endpoint is running correctly',
       timestamp: new Date().toISOString(),
       socketConfig: {
         path: '/api/socket',
         transports: ['websocket', 'polling'],
-        connectTimeout: 10000,
-        pingTimeout: 10000,
+        connectTimeout: 20000,
+        pingTimeout: 20000,
         pingInterval: 5000,
       },
       environment: envInfo,
