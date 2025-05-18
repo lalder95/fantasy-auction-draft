@@ -1,4 +1,4 @@
-// pages/api/socket-test.ts
+// pages/api/socket-test.ts - Proper API endpoint
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 export default async function handler(

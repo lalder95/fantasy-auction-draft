@@ -19,8 +19,7 @@ interface AuctionRoomProps {
 // Move socket outside component to maintain it between renders
 let socket: Socket | null = null;
 let socketRetryCount = 0;
-const MAX_RETRIES = 7;
-const RETRY_DELAY = 2000; // 2 seconds
+const MAX_RETRIES = 5;
 
 export default function AuctionRoom({
   auctionId,
@@ -35,215 +34,105 @@ export default function AuctionRoom({
   const [error, setError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting' | 'reconnecting'>('connecting');
   const [debug, setDebug] = useState<string[]>([]);
-  const [socketInitialized, setSocketInitialized] = useState<boolean>(false);
 
   const addDebugMessage = (message: string) => {
     setDebug(prev => {
       const newMessages = [...prev, `${new Date().toISOString().substring(11, 19)} - ${message}`];
-      // Limit to last 50 messages
       return newMessages.slice(-50);
     });
     console.log(`DEBUG: ${message}`);
   };
   
-  // Test connection with a simple ping before socket setup
-  const testConnection = useCallback(async () => {
-    try {
-      addDebugMessage("Testing API endpoint connection...");
-      const response = await fetch('/api/socket-test', { 
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        }
-      });
-      
-      if (!response.ok) {
-        addDebugMessage(`API endpoint test failed: ${response.status} ${response.statusText}`);
-        throw new Error(`API connection test failed: ${response.status}`);
-      }
-      
-      addDebugMessage("API endpoint test successful");
-      return true;
-    } catch (err) {
-      addDebugMessage(`API test error: ${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    }
-  }, []);
-  
-  // Initialize socket connection
+  // Initialize socket connection - simplified approach
   useEffect(() => {
-    const setupSocket = async () => {
-      // Only proceed if socket isn't already initialized or connected
-      if (socketInitialized) return;
-      
+    const setupSocket = () => {
       try {
-        addDebugMessage(`Initializing socket connection, retry count: ${socketRetryCount}`);
+        addDebugMessage('Initializing socket connection...');
         
-        // First test the API connection
-        const apiAvailable = await testConnection();
-        if (!apiAvailable) {
-          addDebugMessage(`API endpoint unavailable, will retry in ${RETRY_DELAY}ms`);
-          throw new Error("API endpoint is unavailable");
-        }
-        
-        // Close any existing socket
+        // Directly attempt to create the socket connection
         if (socket) {
-          addDebugMessage('Closing existing socket');
-          socket.close();
+          addDebugMessage('Cleaning up previous socket...');
+          socket.disconnect();
         }
         
-        addDebugMessage('Creating new socket connection');
-        // Create socket with more specific options for better error handling
+        // Create socket with simplified configuration
         socket = io({
           path: '/api/socket',
+          transports: ['websocket', 'polling'],
+          reconnection: true,
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
-          reconnectionDelayMax: 5000,
-          timeout: 20000,
-          forceNew: true, // Force a new connection
-          autoConnect: true, // Start connection automatically
-          transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+          timeout: 20000
         });
         
-        // Setup socket event handlers
-        if (socket) {
-          // Simple ping to test connection
-          socket.emit('ping', (response: any) => {
-            addDebugMessage(`Ping response: ${JSON.stringify(response)}`);
-          });
+        // Set up event handlers
+        socket.on('connect', () => {
+          addDebugMessage(`Socket connected with ID: ${socket?.id}`);
+          setConnectionStatus('connected');
+          socketRetryCount = 0;
           
-          socket.on('connect', () => {
-            addDebugMessage(`Socket connected: ${socket?.id}`);
-            setConnectionStatus('connected');
-            socketRetryCount = 0;
-            setSocketInitialized(true);
-            
-            // Join auction room
-            if (socket) {
-              addDebugMessage(`Sending JOIN_AUCTION: ${auctionId} (${role})`);
-              socket.emit('JOIN_AUCTION', {
-                auctionId,
-                role,
-                sessionId,
-                managerId,
-              });
-            }
-          });
-          
-          socket.on('connect_error', (err) => {
-            addDebugMessage(`Socket connect error: ${err.message}`);
-            setError(`Connection error: ${err.message}`);
-            
-            if (socketRetryCount < MAX_RETRIES) {
-              socketRetryCount++;
-              setConnectionStatus('reconnecting');
-            }
-          });
-          
-          socket.on('disconnect', (reason) => {
-            addDebugMessage(`Socket disconnected: ${reason}`);
-            setConnectionStatus('disconnected');
-            setSocketInitialized(false);
-            
-            if (reason === 'io server disconnect' && socket) {
-              // The server has forcefully disconnected the socket
-              addDebugMessage('Server forced disconnect, attempting reconnect');
-              socket.connect();
-            }
-          });
-          
-          socket.on('error', (error) => {
-            addDebugMessage(`Socket error: ${error instanceof Error ? error.message : String(error)}`);
-          });
-          
-          socket.on('reconnect_attempt', (attemptNumber) => {
-            addDebugMessage(`Socket reconnect attempt: ${attemptNumber}`);
-            setConnectionStatus('reconnecting');
-          });
-          
-          socket.on('AUCTION_UPDATE', (data) => {
-            addDebugMessage(`Received AUCTION_UPDATE`);
-            setAuction(data);
-            setLoading(false);
-            
-            // If manager role, find current manager
-            if (role === 'manager' && managerId) {
-              const manager = data.managers.find((m: Manager) => m.id === managerId);
-              setCurrentManager(manager || null);
-            }
-          });
-
-          socket.on('JOIN_CONFIRMATION', (data) => {
-            addDebugMessage(`Received JOIN_CONFIRMATION for auction: ${data.auctionId}`);
-            // Fetch auction data if not already received
-            if (!auction && socket) {
-              socket.emit('REQUEST_AUCTION_DATA', { auctionId });
-            }
-          });
-          
-          if (managerId) {
-            socket.on(`AUCTION_UPDATE:${managerId}`, (data) => {
-              addDebugMessage(`Received AUCTION_UPDATE:${managerId}`);
-              setAuction(data);
-              setLoading(false);
-              setCurrentManager(data.currentManager || null);
+          // Join auction room
+          if (socket) {
+            addDebugMessage(`Joining auction room: ${auctionId}`);
+            socket.emit('JOIN_AUCTION', {
+              auctionId,
+              role,
+              sessionId,
+              managerId,
             });
           }
+        });
+        
+        socket.on('connect_error', (err) => {
+          addDebugMessage(`Socket connection error: ${err.message}`);
+          setError(`Connection error: ${err.message}`);
           
-          socket.on('ERROR', (data) => {
-            addDebugMessage(`Received ERROR: ${data.message}`);
-            setError(data.message);
-          });
+          if (socketRetryCount < MAX_RETRIES) {
+            socketRetryCount++;
+            setConnectionStatus('reconnecting');
+          }
+        });
+        
+        socket.on('disconnect', (reason) => {
+          addDebugMessage(`Socket disconnected: ${reason}`);
+          setConnectionStatus('disconnected');
+        });
+        
+        socket.on('AUCTION_UPDATE', (data) => {
+          addDebugMessage('Received auction update');
+          setAuction(data);
+          setLoading(false);
           
-          socket.on('pong', (data) => {
-            addDebugMessage(`Received pong: ${JSON.stringify(data)}`);
-          });
-        }
+          // If manager role, find current manager
+          if (role === 'manager' && managerId && data.managers) {
+            const manager = data.managers.find((m: Manager) => m.id === managerId);
+            setCurrentManager(manager || null);
+          }
+        });
+        
+        socket.on('ERROR', (data) => {
+          addDebugMessage(`Received error: ${data.message}`);
+          setError(data.message);
+        });
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         addDebugMessage(`Socket initialization error: ${errorMessage}`);
-        setError(`Failed to connect to auction room: ${errorMessage}`);
-        setLoading(false);
-        
-        // Try to reconnect if under max retries
-        if (socketRetryCount < MAX_RETRIES) {
-          socketRetryCount++;
-          setConnectionStatus('reconnecting');
-          
-          // Schedule retry with increasing delay
-          addDebugMessage(`Scheduling retry in ${RETRY_DELAY * socketRetryCount}ms`);
-          setTimeout(setupSocket, RETRY_DELAY * socketRetryCount);
-        }
+        setError(`Failed to connect: ${errorMessage}`);
       }
     };
     
-    // Start the socket setup process
+    // Start the socket setup
     setupSocket();
     
     // Cleanup function
     return () => {
       if (socket) {
         addDebugMessage('Cleaning up socket connection');
-        // Remove all listeners
-        socket.off('connect');
-        socket.off('connect_error');
-        socket.off('disconnect');
-        socket.off('reconnect_attempt');
-        socket.off('AUCTION_UPDATE');
-        if (managerId) {
-          socket.off(`AUCTION_UPDATE:${managerId}`);
-        }
-        socket.off('ERROR');
-        socket.off('pong');
-        socket.off('JOIN_CONFIRMATION');
-        
-        // Disconnect socket
         socket.disconnect();
         socket = null;
-        setSocketInitialized(false);
       }
     };
-  }, [auctionId, role, managerId, sessionId, socketInitialized, testConnection, auction]);
+  }, [auctionId, role, managerId, sessionId]);
   
   // Determine if current manager can nominate
   const canNominate = useCallback(() => {
@@ -423,7 +312,6 @@ export default function AuctionRoom({
     setConnectionStatus('connecting');
     setLoading(true);
     setError(null);
-    setSocketInitialized(false);
   };
   
   if (loading) {
@@ -451,7 +339,6 @@ export default function AuctionRoom({
               <div className="mb-1">Socket ID: {socket?.id || 'none'}</div>
               <div className="mb-1">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
               <div className="mb-1">Retry Count: {socketRetryCount}</div>
-              <div className="mb-1">Socket Initialized: {socketInitialized ? 'Yes' : 'No'}</div>
               <div className="mb-1">Auction ID: {auctionId}</div>
               <div className="mb-1">Role: {role}</div>
               <div className="mb-1">Manager ID: {managerId || 'N/A'}</div>
@@ -502,7 +389,6 @@ export default function AuctionRoom({
               <div className="mb-1">Socket ID: {socket?.id || 'none'}</div>
               <div className="mb-1">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
               <div className="mb-1">Retry Count: {socketRetryCount}</div>
-              <div className="mb-1">Socket Initialized: {socketInitialized ? 'Yes' : 'No'}</div>
               <div className="font-medium mt-2">All Debug Messages:</div>
               {debug.map((msg, i) => (
                 <div key={i} className="mb-1">{msg}</div>
@@ -727,7 +613,6 @@ export default function AuctionRoom({
                 <div className="mb-1">Socket ID: {socket?.id || 'none'}</div>
                 <div className="mb-1">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
                 <div className="mb-1">Retry Count: {socketRetryCount}</div>
-                <div className="mb-1">Socket Initialized: {socketInitialized ? 'Yes' : 'No'}</div>
                 <div className="mt-2 font-medium">Recent Debug Messages:</div>
                 {debug.slice(-5).map((msg, i) => (
                   <div key={i} className="mb-1">{msg}</div>
