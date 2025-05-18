@@ -1,8 +1,9 @@
 // components/auction/AuctionRoom.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
-import io, { Socket } from 'socket.io-client';
+import axios from 'axios';
 import { Auction, Manager, PlayerUp } from '../../lib/auction';
+import { getPusherClient } from '../../lib/pusher-client';
 import AuctionStatus from './AuctionStatus';
 import PlayerCard from './PlayerCard';
 import BidInterface from './BidInterface';
@@ -16,11 +17,6 @@ interface AuctionRoomProps {
   sessionId?: string;
 }
 
-// Move socket outside component to maintain it between renders
-let socket: Socket | null = null;
-let socketRetryCount = 0;
-const MAX_RETRIES = 5;
-
 export default function AuctionRoom({
   auctionId,
   role,
@@ -32,7 +28,8 @@ export default function AuctionRoom({
   const [currentManager, setCurrentManager] = useState<Manager | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting' | 'reconnecting'>('connecting');
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('connecting');
+  const [expirationChecker, setExpirationChecker] = useState<any>(null);
   const [debug, setDebug] = useState<string[]>([]);
 
   const addDebugMessage = (message: string) => {
@@ -43,93 +40,114 @@ export default function AuctionRoom({
     console.log(`DEBUG: ${message}`);
   };
   
-  // Initialize socket connection - simplified approach
+  // Initialize Pusher and fetch auction data
   useEffect(() => {
-    const setupSocket = () => {
-      try {
-        addDebugMessage('Initializing socket connection...');
-        
-        // Directly attempt to create the socket connection
-        if (socket) {
-          addDebugMessage('Cleaning up previous socket...');
-          socket.disconnect();
-        }
-        
-        // Create socket with simplified configuration
-        socket = io({
-          path: '/api/socket',
-          transports: ['websocket', 'polling'],
-          reconnection: true,
-          reconnectionAttempts: 5,
-          reconnectionDelay: 1000,
-          timeout: 20000
-        });
-        
-        // Set up event handlers
-        socket.on('connect', () => {
-          addDebugMessage(`Socket connected with ID: ${socket?.id}`);
-          setConnectionStatus('connected');
-          socketRetryCount = 0;
+    // Import expiration checker dynamically to avoid server-side rendering issues
+    import('../../lib/expiration-checker').then(({ ExpirationChecker }) => {
+      // Initial fetch of auction data
+      const fetchAuction = async () => {
+        try {
+          addDebugMessage(`Fetching auction data for ID: ${auctionId}`);
+          const response = await axios.get(`/api/auction/${auctionId}`, {
+            params: { role, managerId, sessionId }
+          });
           
-          // Join auction room
-          if (socket) {
-            addDebugMessage(`Joining auction room: ${auctionId}`);
-            socket.emit('JOIN_AUCTION', {
-              auctionId,
-              role,
-              sessionId,
-              managerId,
-            });
+          if (response.data.auction) {
+            addDebugMessage('Auction data received successfully');
+            setAuction(response.data.auction);
+            
+            // If manager role, find current manager
+            if (role === 'manager' && managerId && response.data.auction.managers) {
+              const manager = response.data.auction.managers.find(
+                (m: Manager) => m.id === managerId
+              );
+              setCurrentManager(manager || null);
+            }
+            
+            setConnectionStatus('connected');
+            
+            // Start expiration checker if commissioner and auction is active
+            if (role === 'commissioner' && response.data.auction.status === 'active') {
+              addDebugMessage('Starting expiration checker (commissioner only)');
+              const checker = new ExpirationChecker(
+                auctionId, 
+                process.env.NEXT_PUBLIC_AUCTION_WORKER_SECRET || 'dev-secret'
+              );
+              checker.start(1000); // Check every second
+              
+              // Store in component state for cleanup
+              setExpirationChecker(checker);
+            }
+          } else {
+            addDebugMessage('No auction data in response');
+            setError('Failed to load auction data');
           }
-        });
-        
-        socket.on('connect_error', (err) => {
-          addDebugMessage(`Socket connection error: ${err.message}`);
-          setError(`Connection error: ${err.message}`);
           
-          if (socketRetryCount < MAX_RETRIES) {
-            socketRetryCount++;
-            setConnectionStatus('reconnecting');
-          }
-        });
-        
-        socket.on('disconnect', (reason) => {
-          addDebugMessage(`Socket disconnected: ${reason}`);
-          setConnectionStatus('disconnected');
-        });
-        
-        socket.on('AUCTION_UPDATE', (data) => {
-          addDebugMessage('Received auction update');
-          setAuction(data);
           setLoading(false);
-          
-          // If manager role, find current manager
-          if (role === 'manager' && managerId && data.managers) {
-            const manager = data.managers.find((m: Manager) => m.id === managerId);
-            setCurrentManager(manager || null);
-          }
-        });
-        
-        socket.on('ERROR', (data) => {
-          addDebugMessage(`Received error: ${data.message}`);
-          setError(data.message);
-        });
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        addDebugMessage(`Socket initialization error: ${errorMessage}`);
-        setError(`Failed to connect: ${errorMessage}`);
+        } catch (err) {
+          addDebugMessage(`Error fetching auction: ${err instanceof Error ? err.message : String(err)}`);
+          setError('Failed to load auction data. Please try again.');
+          setLoading(false);
+        }
+      };
+      
+      fetchAuction();
+    });
+    
+    // Subscribe to Pusher channel for real-time updates
+    const pusher = getPusherClient();
+    addDebugMessage('Initializing Pusher connection');
+    
+    // Create a channel specific to this auction
+    const channelName = `auction-${auctionId}`;
+    addDebugMessage(`Subscribing to Pusher channel: ${channelName}`);
+    const channel = pusher.subscribe(channelName);
+    
+    // Handle connection success
+    pusher.connection.bind('connected', () => {
+      addDebugMessage('Pusher connected successfully');
+      setConnectionStatus('connected');
+    });
+    
+    // Handle connection errors
+    pusher.connection.bind('error', (err: any) => {
+      addDebugMessage(`Pusher connection error: ${err.message}`);
+      setConnectionStatus('disconnected');
+      setError(`Connection error: ${err.message}`);
+    });
+    
+    // Handle auction updates
+    channel.bind('auction-update', (data: { auction: Auction }) => {
+      addDebugMessage('Received auction update from Pusher');
+      setAuction(data.auction);
+      
+      // Update current manager if needed
+      if (role === 'manager' && managerId && data.auction.managers) {
+        const manager = data.auction.managers.find(m => m.id === managerId);
+        setCurrentManager(manager || null);
       }
-    };
+    });
     
-    // Start the socket setup
-    setupSocket();
+    // Handle errors
+    channel.bind('auction-error', (data: { message: string }) => {
+      addDebugMessage(`Received error: ${data.message}`);
+      // Don't set the error state to avoid blocking the UI, just log it
+      // Unless it's critical
+      if (data.message.includes('authentication') || data.message.includes('not found')) {
+        setError(data.message);
+      }
+    });
     
-    // Cleanup function
     return () => {
-      if (socket) {
-        addDebugMessage('Cleaning up socket connection');
-        socket.disconnect();
-        socket = null;
+      // Clean up Pusher subscription
+      addDebugMessage('Cleaning up Pusher subscriptions');
+      channel.unbind_all();
+      pusher.unsubscribe(channelName);
+      
+      // Clean up expiration checker if it exists
+      if (expirationChecker) {
+        addDebugMessage('Stopping expiration checker');
+        expirationChecker.stop();
       }
     };
   }, [auctionId, role, managerId, sessionId]);
@@ -146,172 +164,87 @@ export default function AuctionRoom({
     return nominatingManager && nominatingManager.id === currentManager.id;
   }, [auction, currentManager]);
   
-  // Socket event emitters with null checks
+  // API call helpers for actions
+  const makeAuctionAction = async (action: string, data: any) => {
+    try {
+      addDebugMessage(`Making auction action: ${action}`);
+      await axios.post('/api/auction/action', {
+        auctionId,
+        action,
+        ...data,
+        managerId: role === 'commissioner' ? data.managerId : managerId,
+      });
+      
+      // We don't need to update state here - Pusher will handle that
+      addDebugMessage(`Action ${action} sent successfully`);
+      return true;
+    } catch (err) {
+      addDebugMessage(`Error making action ${action}: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  };
   
   // Place bid
   const handleBid = useCallback((playerId: string, bidAmount: number) => {
-    if (!socket) {
-      addDebugMessage('Cannot place bid: No socket connection');
-      return;
-    }
-    
-    addDebugMessage(`Sending PLACE_BID: Player ${playerId}, Bid $${bidAmount}`);
-    socket.emit('PLACE_BID', {
-      playerId,
-      bidAmount,
-      managerId: role === 'commissioner' ? undefined : managerId,
-    });
-  }, [role, managerId, addDebugMessage]);
+    return makeAuctionAction('BID', { playerId, bidAmount });
+  }, [auctionId, managerId, role]);
   
   // Pass on player
   const handlePass = useCallback((playerId: string) => {
-    if (!socket) {
-      addDebugMessage('Cannot pass: No socket connection');
-      return;
-    }
-    
-    addDebugMessage(`Sending PASS_ON_PLAYER: Player ${playerId}`);
-    socket.emit('PASS_ON_PLAYER', {
-      playerId,
-      managerId: role === 'commissioner' ? undefined : managerId,
-    });
-  }, [role, managerId, addDebugMessage]);
+    return makeAuctionAction('PASS', { playerId });
+  }, [auctionId, managerId, role]);
   
   // Nominate player
   const handleNominate = useCallback((playerId: string, startingBid: number) => {
-    if (!socket) {
-      addDebugMessage('Cannot nominate: No socket connection');
-      return;
-    }
-    
-    addDebugMessage(`Sending NOMINATE_PLAYER: Player ${playerId}, Starting Bid $${startingBid}`);
-    socket.emit('NOMINATE_PLAYER', {
-      playerId,
-      startingBid,
-      managerId: role === 'commissioner' ? undefined : managerId,
-    });
-  }, [role, managerId, addDebugMessage]);
+    return makeAuctionAction('NOMINATE', { playerId, startingBid });
+  }, [auctionId, managerId, role]);
   
   // Commissioner specific handlers
   const handlePauseAuction = useCallback(() => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot pause auction: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending PAUSE_AUCTION`);
-    socket.emit('PAUSE_AUCTION');
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('PAUSE_AUCTION', {});
+  }, [auctionId]);
   
   const handleResumeAuction = useCallback(() => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot resume auction: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending RESUME_AUCTION`);
-    socket.emit('RESUME_AUCTION');
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('RESUME_AUCTION', {});
+  }, [auctionId]);
   
   const handleEndAuction = useCallback(() => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot end auction: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending END_AUCTION`);
-    socket.emit('END_AUCTION');
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('END_AUCTION', {});
+  }, [auctionId]);
   
   const handleUpdateManagerBudget = useCallback((managerId: string, newBudget: number) => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot update budget: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending UPDATE_BUDGET: Manager ${managerId}, Budget $${newBudget}`);
-    socket.emit('UPDATE_BUDGET', {
-      managerId,
-      newBudget,
-    });
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('UPDATE_BUDGET', { managerId, newBudget });
+  }, [auctionId]);
   
   const handleNominateForManager = useCallback((playerId: string, startingBid: number, managerId: string) => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot nominate for manager: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending NOMINATE_PLAYER as commissioner: Player ${playerId}, Starting Bid $${startingBid}, Manager ${managerId}`);
-    socket.emit('NOMINATE_PLAYER', {
-      playerId,
-      startingBid,
-      managerId,
-    });
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('NOMINATE', { playerId, startingBid, managerId });
+  }, [auctionId]);
   
   const handleAdjustTime = useCallback((playerId: string, secondsToAdjust: number) => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot adjust time: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending ADJUST_TIME: Player ${playerId}, Seconds ${secondsToAdjust}`);
-    socket.emit('ADJUST_TIME', {
-      playerId,
-      secondsToAdjust,
-    });
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('ADJUST_TIME', { playerId, secondsToAdjust });
+  }, [auctionId]);
   
   const handleRemovePlayer = useCallback((playerId: string) => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot remove player: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending REMOVE_PLAYER: Player ${playerId}`);
-    socket.emit('REMOVE_PLAYER', {
-      playerId,
-    });
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('REMOVE_PLAYER', { playerId });
+  }, [auctionId]);
   
   const handleCancelBid = useCallback((playerId: string) => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot cancel bid: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending CANCEL_BID: Player ${playerId}`);
-    socket.emit('CANCEL_BID', {
-      playerId,
-    });
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('CANCEL_BID', { playerId });
+  }, [auctionId]);
   
   const handleBidForManager = useCallback((playerId: string, bidAmount: number, managerId: string) => {
-    if (!socket || role !== 'commissioner') {
-      addDebugMessage('Cannot bid for manager: No socket or not commissioner');
-      return;
-    }
-    
-    addDebugMessage(`Sending PLACE_BID as commissioner: Player ${playerId}, Bid $${bidAmount}, Manager ${managerId}`);
-    socket.emit('PLACE_BID', {
-      playerId,
-      bidAmount,
-      managerId,
-    });
-  }, [role, addDebugMessage]);
+    return makeAuctionAction('BID', { playerId, bidAmount, managerId });
+  }, [auctionId]);
   
   // Manual retry connection button handler
   const handleRetryConnection = () => {
     addDebugMessage('Manual retry connection requested');
-    if (socket) {
-      socket.disconnect();
-      socket = null;
-    }
-    socketRetryCount = 0;
     setConnectionStatus('connecting');
     setLoading(true);
     setError(null);
+    
+    // Reload the page to reconnect
+    window.location.reload();
   };
   
   if (loading) {
@@ -322,7 +255,7 @@ export default function AuctionRoom({
           <p className="mt-4 text-lg">Loading auction...</p>
           <p className="mt-2 text-sm text-gray-500">Connection status: {connectionStatus}</p>
           
-          {(connectionStatus === 'disconnected' || connectionStatus === 'reconnecting') && (
+          {connectionStatus === 'disconnected' && (
             <button
               onClick={handleRetryConnection}
               className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
@@ -331,14 +264,11 @@ export default function AuctionRoom({
             </button>
           )}
           
-          {/* Extended debug information to help troubleshooting */}
+          {/* Debug information - collapsible */}
           <details className="mt-6 text-xs text-left mx-auto max-w-md bg-white p-4 rounded shadow">
             <summary className="cursor-pointer text-gray-500 font-medium">Connection Details</summary>
             <div className="mt-2 p-2 bg-gray-100 rounded overflow-auto max-h-40">
               <div className="mb-1">Status: {connectionStatus}</div>
-              <div className="mb-1">Socket ID: {socket?.id || 'none'}</div>
-              <div className="mb-1">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
-              <div className="mb-1">Retry Count: {socketRetryCount}</div>
               <div className="mb-1">Auction ID: {auctionId}</div>
               <div className="mb-1">Role: {role}</div>
               <div className="mb-1">Manager ID: {managerId || 'N/A'}</div>
@@ -381,14 +311,11 @@ export default function AuctionRoom({
             </button>
           </div>
           
-          {/* Debug information (expanded for troubleshooting) */}
+          {/* Debug information */}
           <details className="mt-6 text-xs">
             <summary className="cursor-pointer text-gray-500">Show Debug Info</summary>
             <div className="mt-2 p-2 bg-gray-100 rounded overflow-auto max-h-80">
               <div className="mb-1">Status: {connectionStatus}</div>
-              <div className="mb-1">Socket ID: {socket?.id || 'none'}</div>
-              <div className="mb-1">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
-              <div className="mb-1">Retry Count: {socketRetryCount}</div>
               <div className="font-medium mt-2">All Debug Messages:</div>
               {debug.map((msg, i) => (
                 <div key={i} className="mb-1">{msg}</div>
@@ -411,7 +338,7 @@ export default function AuctionRoom({
           <div className="text-sm">
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full ${
               connectionStatus === 'connected' ? 'bg-green-100 text-green-800' : 
-              connectionStatus === 'reconnecting' ? 'bg-yellow-100 text-yellow-800' : 
+              connectionStatus === 'connecting' ? 'bg-yellow-100 text-yellow-800' : 
               'bg-red-100 text-red-800'
             }`}>
               {connectionStatus}
@@ -604,21 +531,6 @@ export default function AuctionRoom({
                 })}
               </div>
             </div>
-            
-            {/* Debug information (hidden by default) */}
-            <details className="text-xs bg-white shadow-md rounded-lg p-3">
-              <summary className="cursor-pointer text-gray-500">Connection Info</summary>
-              <div className="mt-2 p-2 bg-gray-100 rounded overflow-auto max-h-40">
-                <div className="mb-1">Status: {connectionStatus}</div>
-                <div className="mb-1">Socket ID: {socket?.id || 'none'}</div>
-                <div className="mb-1">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
-                <div className="mb-1">Retry Count: {socketRetryCount}</div>
-                <div className="mt-2 font-medium">Recent Debug Messages:</div>
-                {debug.slice(-5).map((msg, i) => (
-                  <div key={i} className="mb-1">{msg}</div>
-                ))}
-              </div>
-            </details>
           </div>
         </div>
       </div>
