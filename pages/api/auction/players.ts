@@ -1,6 +1,6 @@
-// pages/api/auction/players.ts - Simple approach with string cleaning
+// pages/api/auction/players.ts - Complete rewrite with raw queries
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { neon } from '@neondatabase/serverless';
+import { Pool } from 'pg';
 
 // Configure for larger payloads
 export const config = {
@@ -34,45 +34,45 @@ export default async function handler(
     return res.status(400).json({ message: 'Auction ID and available players are required' });
   }
   
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    return res.status(500).json({ message: 'DATABASE_URL environment variable is not set' });
+  }
+  
+  // Create a standard pg pool instead of neon
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: {
+      rejectUnauthorized: false
+    }
+  });
+  
+  let client;
+  
   try {
-    const sql = neon(process.env.DATABASE_URL || '');
+    client = await pool.connect();
     
     // Verify auction exists
-    const auctionExists = await sql`SELECT EXISTS(SELECT 1 FROM auctions WHERE id = ${auctionId})`;
+    const auctionResult = await client.query(
+      'SELECT id FROM auctions WHERE id = $1', 
+      [auctionId]
+    );
     
-    if (!auctionExists || !auctionExists[0] || !auctionExists[0].exists) {
+    if (!auctionResult.rows || auctionResult.rows.length === 0) {
+      await client.release();
       return res.status(404).json({ message: 'Auction not found' });
     }
     
     console.log(`Processing ${availablePlayers.length} players for auction ${auctionId}`);
     
-    // Try to save a sample player first to test DB connection
-    try {
-      const testPlayer = {
-        player_id: 'test-player',
-        full_name: 'Test Player',
-        position: 'QB',
-        team: 'TEST',
-        years_exp: 0
-      };
-      
-      await sql`
-        INSERT INTO available_players (player_id, auction_id, full_name, position, team, years_exp)
-        VALUES (${testPlayer.player_id}, ${auctionId}, ${testPlayer.full_name}, ${testPlayer.position}, ${testPlayer.team}, ${testPlayer.years_exp})
-        ON CONFLICT DO NOTHING
-      `;
-      
-      console.log('Test player insertion successful');
-    } catch (testError) {
-      console.error('Test player insertion failed:', testError);
-      // Continue anyway to try the batch process
-    }
+    // Clear existing players for this auction
+    await client.query(
+      'DELETE FROM available_players WHERE auction_id = $1', 
+      [auctionId]
+    );
     
-    // Clear existing players
-    await sql`DELETE FROM available_players WHERE auction_id = ${auctionId}`;
-    
-    // Process in very small batches
-    const BATCH_SIZE = 10; 
+    // Process in smaller batches
+    const BATCH_SIZE = 20; // Even smaller batch size
     let successCount = 0;
     let errorCount = 0;
     let lastError = null;
@@ -84,54 +84,92 @@ export default async function handler(
       
       console.log(`Processing batch ${batchNum}/${totalBatches} (${batch.length} players)`);
       
-      // Process each player individually
-      for (const player of batch) {
+      // For each player in the batch, do individual inserts
+      for (let j = 0; j < batch.length; j++) {
         try {
+          const player = batch[j];
+          
           // Skip invalid players
-          if (!player || !player.player_id) {
+          if (!player || typeof player !== 'object' || !player.player_id) {
+            console.warn(`Skipping invalid player at index ${i + j}`);
             errorCount++;
             continue;
           }
           
-          // Clean up data to ensure correct types
-          const playerId = String(player.player_id);
-          const fullName = String(player.full_name || 'Unknown Player');
-          const position = String(player.position || 'UNKNOWN');
-          const team = player.team ? String(player.team) : null;
-          const yearsExp = Number(player.years_exp || 0);
+          // Clean and sanitize player data
+          const playerId = String(player.player_id || '').slice(0, 100);
+          const fullName = String(player.full_name || 'Unknown Player').slice(0, 200);
+          const position = String(player.position || 'UNKNOWN').slice(0, 10);
+          const team = player.team ? String(player.team).slice(0, 10) : null;
+          const yearsExp = typeof player.years_exp === 'number' ? 
+            player.years_exp : 
+            (parseInt(String(player.years_exp || '0')) || 0);
           
-          // Insert with simple values
-          await sql`
-            INSERT INTO available_players (player_id, auction_id, full_name, position, team, years_exp)
-            VALUES (${playerId}, ${auctionId}, ${fullName}, ${position}, ${team}, ${yearsExp})
+          // Use a simple INSERT query with positional parameters
+          const query = `
+            INSERT INTO available_players (
+              player_id, 
+              auction_id, 
+              full_name, 
+              position, 
+              team, 
+              years_exp
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (player_id, auction_id) DO UPDATE SET
-              full_name = ${fullName},
-              position = ${position},
-              team = ${team},
-              years_exp = ${yearsExp}
+              full_name = EXCLUDED.full_name,
+              position = EXCLUDED.position,
+              team = EXCLUDED.team,
+              years_exp = EXCLUDED.years_exp
           `;
+          
+          await client.query(query, [
+            playerId,
+            auctionId,
+            fullName,
+            position,
+            team, 
+            yearsExp
+          ]);
           
           successCount++;
         } catch (playerError) {
-          console.error('Error inserting player:', playerError);
-          console.error('Problem player:', JSON.stringify(player));
-          errorCount++;
+          // Log the error but continue with other players
+          console.error(`Error inserting player at index ${i + j}:`, playerError);
+          try {
+            console.error('Problematic player data:', JSON.stringify(batch[j]));
+          } catch (e) {
+            console.error('Could not stringify player data');
+          }
           lastError = playerError;
+          errorCount++;
         }
       }
       
-      // Log progress
       console.log(`Completed batch ${batchNum}/${totalBatches}: ${successCount} successful, ${errorCount} errors`);
     }
     
-    console.log(`Player insertion complete. Total: ${successCount} successful, ${errorCount} errors`);
+    // Update auction with player count even if some failed
+    if (successCount > 0) {
+      try {
+        await client.query(
+          `UPDATE auctions 
+           SET settings = settings || jsonb_build_object('availablePlayersCount', $1)
+           WHERE id = $2`,
+          [successCount, auctionId]
+        );
+      } catch (e) {
+        console.error('Error updating player count in auction settings:', e);
+      }
+    }
     
+    // Return success with detailed counts
     return res.status(200).json({
       success: true,
-      message: `Processed ${availablePlayers.length} players: ${successCount} successful, ${errorCount} errors`,
+      message: `Processed ${successCount + errorCount} players: ${successCount} successful, ${errorCount} errors`,
       successCount,
       errorCount,
-      lastError: lastError ? String(lastError) : null
+      lastError: lastError ? (lastError instanceof Error ? lastError.message : String(lastError)) : null
     });
   } catch (error) {
     console.error('Error updating available players:', error);
@@ -139,5 +177,17 @@ export default async function handler(
       message: 'Failed to update available players',
       error: error instanceof Error ? error.message : String(error)
     });
+  } finally {
+    // Make sure to release the client
+    if (client) {
+      client.release();
+    }
+    
+    // Close the pool
+    try {
+      await pool.end();
+    } catch (e) {
+      console.error('Error closing database pool:', e);
+    }
   }
 }
