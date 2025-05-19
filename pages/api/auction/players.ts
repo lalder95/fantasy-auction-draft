@@ -1,4 +1,4 @@
-// pages/api/auction/players.ts - Complete rewrite with better batch processing
+// pages/api/auction/players.ts - Complete rewrite with robust transaction handling
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Pool } from 'pg';
 
@@ -39,7 +39,7 @@ export default async function handler(
     return res.status(500).json({ message: 'DATABASE_URL environment variable is not set' });
   }
   
-  // Create a standard pg pool instead of neon
+  // Create a connection pool for better concurrency handling
   const pool = new Pool({
     connectionString: databaseUrl,
     ssl: {
@@ -55,120 +55,111 @@ export default async function handler(
   try {
     client = await pool.connect();
     
-    // Start transaction
-    await client.query('BEGIN');
-    
-    // Verify auction exists
+    // Verify auction exists before proceeding
     const auctionResult = await client.query(
       'SELECT id FROM auctions WHERE id = $1', 
       [auctionId]
     );
     
     if (!auctionResult.rows || auctionResult.rows.length === 0) {
-      await client.query('ROLLBACK');
       await client.release();
       return res.status(404).json({ message: 'Auction not found' });
     }
     
+    // Log the total players we're about to process
     console.log(`Processing ${availablePlayers.length} players for auction ${auctionId}`);
     
-    // Clear existing players for this auction - but only if this is a full replacement
-    // and we have players to add
     if (availablePlayers.length > 0) {
-      await client.query(
-        'DELETE FROM available_players WHERE auction_id = $1', 
-        [auctionId]
-      );
-    }
-    
-    // Process in larger batches
-    const BATCH_SIZE = 100; // Larger batch size for better performance
-    let successCount = 0;
-    let errorCount = 0;
-    let lastError = null;
-    
-    // Prepare single parameterized query - much more efficient
-    const insertQuery = `
-      INSERT INTO available_players (
-        player_id, auction_id, full_name, position, team, years_exp
-      )
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (player_id, auction_id) DO UPDATE SET
-        full_name = EXCLUDED.full_name,
-        position = EXCLUDED.position,
-        team = EXCLUDED.team,
-        years_exp = EXCLUDED.years_exp
-    `;
-    
-    for (let i = 0; i < availablePlayers.length; i += BATCH_SIZE) {
-      const batch = availablePlayers.slice(i, i + BATCH_SIZE);
-      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(availablePlayers.length / BATCH_SIZE);
+      // Start a SINGLE transaction for the entire operation
+      await client.query('BEGIN');
       
-      console.log(`Processing batch ${batchNum}/${totalBatches} (${batch.length} players)`);
-      
-      // Create a batch insert
       try {
-        // For each player in the batch
-        for (const player of batch) {
-          try {
-            // Skip invalid players
-            if (!player || typeof player !== 'object' || !player.player_id) {
-              console.warn(`Skipping invalid player`);
+        // Clear existing players for this auction if we have players to add
+        await client.query(
+          'DELETE FROM available_players WHERE auction_id = $1', 
+          [auctionId]
+        );
+        
+        // Process in batches for better performance
+        const BATCH_SIZE = 200; // Larger batch for better throughput
+        let successCount = 0;
+        let errorCount = 0;
+        
+        // Prepare parameterized query - much more efficient
+        const insertQuery = `
+          INSERT INTO available_players (
+            player_id, auction_id, full_name, position, team, years_exp
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (player_id, auction_id) DO UPDATE SET
+            full_name = EXCLUDED.full_name,
+            position = EXCLUDED.position,
+            team = EXCLUDED.team,
+            years_exp = EXCLUDED.years_exp
+        `;
+        
+        // Process all players in batches but in a single transaction
+        for (let i = 0; i < availablePlayers.length; i += BATCH_SIZE) {
+          const batch = availablePlayers.slice(i, i + BATCH_SIZE);
+          const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+          const totalBatches = Math.ceil(availablePlayers.length / BATCH_SIZE);
+          
+          console.log(`Processing batch ${batchNum}/${totalBatches} (${batch.length} players)`);
+          
+          // Process each player in the batch
+          for (const player of batch) {
+            try {
+              // Skip invalid players
+              if (!player || typeof player !== 'object' || !player.player_id) {
+                console.warn(`Skipping invalid player in batch ${batchNum}`);
+                errorCount++;
+                continue;
+              }
+              
+              // Clean and sanitize player data
+              const playerId = String(player.player_id || '').slice(0, 100);
+              const fullName = String(player.full_name || 'Unknown Player').slice(0, 200);
+              const position = String(player.position || 'UNKNOWN').slice(0, 10);
+              const team = player.team ? String(player.team).slice(0, 10) : null;
+              const yearsExp = typeof player.years_exp === 'number' ? 
+                player.years_exp : 
+                (parseInt(String(player.years_exp || '0')) || 0);
+              
+              await client.query(insertQuery, [
+                playerId,
+                auctionId,
+                fullName,
+                position,
+                team, 
+                yearsExp
+              ]);
+              
+              successCount++;
+            } catch (playerError) {
+              console.error(`Error inserting player in batch ${batchNum}:`, playerError);
               errorCount++;
-              continue;
+              // Continue processing other players instead of failing the whole batch
             }
-            
-            // Clean and sanitize player data
-            const playerId = String(player.player_id || '').slice(0, 100);
-            const fullName = String(player.full_name || 'Unknown Player').slice(0, 200);
-            const position = String(player.position || 'UNKNOWN').slice(0, 10);
-            const team = player.team ? String(player.team).slice(0, 10) : null;
-            const yearsExp = typeof player.years_exp === 'number' ? 
-              player.years_exp : 
-              (parseInt(String(player.years_exp || '0')) || 0);
-            
-            await client.query(insertQuery, [
-              playerId,
-              auctionId,
-              fullName,
-              position,
-              team, 
-              yearsExp
-            ]);
-            
-            successCount++;
-          } catch (playerError) {
-            console.error(`Error inserting player:`, playerError);
-            errorCount++;
-            lastError = playerError;
           }
+          
+          // Log batch completion but DO NOT commit yet
+          console.log(`Completed batch ${batchNum}/${totalBatches}: ${successCount} successful, ${errorCount} errors so far`);
         }
-      } catch (batchError) {
-        console.error(`Error processing batch ${batchNum}:`, batchError);
-        errorCount += batch.length;
-        lastError = batchError;
-      }
-      
-      // Commit after each batch to avoid transaction timeout
-      try {
-        await client.query('COMMIT');
-        await client.query('BEGIN'); // Start a new transaction for the next batch
-      } catch (txError) {
-        console.error(`Transaction error on batch ${batchNum}:`, txError);
-        // Try to continue anyway
-      }
-      
-      console.log(`Completed batch ${batchNum}/${totalBatches}: ${successCount} successful, ${errorCount} errors`);
-    }
-    
-    // Final commit
-    await client.query('COMMIT');
-    
-    // Update auction with player count even if some failed
-    if (successCount > 0) {
-      try {
-        // Store both the total count and available count
+        
+        // After all players are processed, verify the counts before committing
+        const verificationResult = await client.query(
+          'SELECT COUNT(*) as count FROM available_players WHERE auction_id = $1',
+          [auctionId]
+        );
+        
+        const actualCount = parseInt(verificationResult.rows[0].count);
+        
+        if (actualCount !== successCount) {
+          console.error(`Count verification failed: Expected ${successCount}, got ${actualCount}`);
+          // Still proceed with commit since the database count is what matters
+        }
+        
+        // Update auction with player count
         await client.query(
           `UPDATE auctions 
            SET settings = settings || 
@@ -177,23 +168,45 @@ export default async function handler(
                'totalPlayers', $1::int
              )
            WHERE id = $2`,
-          [successCount, auctionId]
+          [actualCount, auctionId]
         );
-      } catch (e) {
-        console.error('Error updating player count in auction settings:', e);
+        
+        // Now commit the entire transaction
+        await client.query('COMMIT');
+        
+        console.log(`Successfully imported ${actualCount} players for auction ${auctionId}`);
+        
+        // Success response with detailed counts
+        return res.status(200).json({
+          success: true,
+          message: `Processed ${successCount + errorCount} players: ${successCount} successful, ${errorCount} errors`,
+          successCount,
+          errorCount,
+          actualCount,
+          expectedTotal: availablePlayers.length
+        });
+      } catch (error) {
+        // Roll back the entire transaction if any part fails
+        console.error('Error in player import transaction:', error);
+        await client.query('ROLLBACK');
+        
+        return res.status(500).json({ 
+          message: 'Failed to import players - transaction rolled back',
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
+    } else {
+      // No players to add - just return success
+      return res.status(200).json({
+        success: true,
+        message: 'No players to process',
+        successCount: 0,
+        errorCount: 0
+      });
     }
-    
-    // Return success with detailed counts
-    return res.status(200).json({
-      success: true,
-      message: `Processed ${successCount + errorCount} players: ${successCount} successful, ${errorCount} errors`,
-      successCount,
-      errorCount,
-      lastError: lastError ? (lastError instanceof Error ? lastError.message : String(lastError)) : null
-    });
   } catch (error) {
-    console.error('Error updating available players:', error);
+    console.error('Unexpected error updating available players:', error);
+    
     // Try to rollback if possible
     try {
       if (client) {
@@ -208,7 +221,7 @@ export default async function handler(
       error: error instanceof Error ? error.message : String(error)
     });
   } finally {
-    // Make sure to release the client
+    // Always release the client
     if (client) {
       client.release();
     }
