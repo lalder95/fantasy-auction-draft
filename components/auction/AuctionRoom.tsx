@@ -50,7 +50,33 @@ export default function AuctionRoom({
       
       if (response.data.auction) {
         addDebugMessage('Full auction data received successfully');
-        setAuction(response.data.auction);
+        
+        // Fetch accurate player counts
+        try {
+          const statsResponse = await axios.get(`/api/auction/player-stats`, {
+            params: { auctionId }
+          });
+          
+          if (statsResponse.data.success) {
+            addDebugMessage(`Player stats: Total=${statsResponse.data.totalPlayers}, Available=${statsResponse.data.availablePlayers}`);
+            
+            // Update auction with correct player counts in settings
+            const updatedAuction = {
+              ...response.data.auction,
+              settings: {
+                ...response.data.auction.settings,
+                totalPlayers: statsResponse.data.totalPlayers,
+                availablePlayersCount: statsResponse.data.availablePlayers
+              }
+            };
+            
+            setAuction(updatedAuction);
+          }
+        } catch (statsErr) {
+          // Still set auction data even if stats fetch fails
+          addDebugMessage(`Error fetching player stats: ${statsErr instanceof Error ? statsErr.message : String(statsErr)}`);
+          setAuction(response.data.auction);
+        }
         
         // If manager role, find current manager
         if (role === 'manager' && managerId && response.data.auction.managers) {
