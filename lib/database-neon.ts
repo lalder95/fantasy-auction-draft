@@ -1,4 +1,4 @@
-// lib/database-neon.ts - Updated with better related data handling
+// lib/database-neon.ts - Updated with better related data handling and upsert pattern
 import { neon } from '@neondatabase/serverless';
 import { Auction, Manager, PlayerUp } from './auction';
 import { v4 as uuidv4 } from 'uuid';
@@ -61,9 +61,7 @@ export async function saveAuction(auction: Auction): Promise<void> {
             settings = ${JSON.stringify(auction.settings)}
         `;
         
-        // 2. Save managers - First delete existing, then insert new
-        await sql`DELETE FROM managers WHERE auction_id = ${auction.id}`;
-        
+        // 2. Save managers - Use upsert pattern instead of delete then insert
         if (auction.managers && auction.managers.length > 0) {
           for (const manager of auction.managers) {
             await sql`
@@ -79,6 +77,17 @@ export async function saveAuction(auction: Auction): Promise<void> {
                 ${manager.initialBudget},
                 ${manager.nominationOrder}
               )
+              ON CONFLICT (id) DO UPDATE SET
+                name = ${manager.name},
+                roster_id = ${manager.rosterId},
+                budget = ${manager.budget},
+                initial_budget = ${manager.initialBudget},
+                nomination_order = ${manager.nominationOrder}
+            `;
+            
+            // First delete existing won players for this manager to avoid duplicates
+            await sql`
+              DELETE FROM manager_won_players WHERE manager_id = ${manager.id}
             `;
             
             // Save won players for this manager
