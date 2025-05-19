@@ -1,4 +1,4 @@
-// components/auction/AuctionRoom.tsx - Modified to handle optimized Pusher updates
+// components/auction/AuctionRoom.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
@@ -44,50 +44,56 @@ export default function AuctionRoom({
   const fetchFullAuction = useCallback(async () => {
     try {
       addDebugMessage(`Fetching full auction data for ID: ${auctionId}`);
-      const response = await axios.get(`/api/auction/${auctionId}`, {
+      
+      // FIRST fetch player stats to ensure we have accurate counts
+      // before getting full auction data
+      const statsResponse = await axios.get(`/api/auction/player-stats`, {
+        params: { auctionId }
+      });
+      
+      if (!statsResponse.data.success) {
+        addDebugMessage('Failed to fetch player stats');
+        throw new Error('Failed to fetch player stats');
+      }
+      
+      const playerStats = {
+        totalPlayers: statsResponse.data.totalPlayers,
+        availablePlayers: statsResponse.data.availablePlayers,
+        playersUp: statsResponse.data.playersUp,
+        completedPlayers: statsResponse.data.completedPlayers
+      };
+      
+      addDebugMessage(`Player stats fetched successfully: Total=${playerStats.totalPlayers}, Available=${playerStats.availablePlayers}, Up=${playerStats.playersUp}, Completed=${playerStats.completedPlayers}`);
+      
+      // NOW fetch the auction with the knowledge of accurate player counts
+      const auctionResponse = await axios.get(`/api/auction/${auctionId}`, {
         params: { role, managerId, sessionId }
       });
       
-      if (response.data.auction) {
-        addDebugMessage('Full auction data received successfully');
-        
-        // Fetch accurate player counts
-        try {
-          const statsResponse = await axios.get(`/api/auction/player-stats`, {
-            params: { auctionId }
-          });
-          
-          if (statsResponse.data.success) {
-            addDebugMessage(`Player stats: Total=${statsResponse.data.totalPlayers}, Available=${statsResponse.data.availablePlayers}`);
-            
-            // Update auction with correct player counts in settings
-            const updatedAuction = {
-              ...response.data.auction,
-              settings: {
-                ...response.data.auction.settings,
-                totalPlayers: statsResponse.data.totalPlayers,
-                availablePlayersCount: statsResponse.data.availablePlayers
-              }
-            };
-            
-            setAuction(updatedAuction);
-          }
-        } catch (statsErr) {
-          // Still set auction data even if stats fetch fails
-          addDebugMessage(`Error fetching player stats: ${statsErr instanceof Error ? statsErr.message : String(statsErr)}`);
-          setAuction(response.data.auction);
-        }
-        
-        // If manager role, find current manager
-        if (role === 'manager' && managerId && response.data.auction.managers) {
-          const manager = response.data.auction.managers.find(
-            (m: Manager) => m.id === managerId
-          );
-          setCurrentManager(manager || null);
-        }
-      } else {
+      if (!auctionResponse.data.auction) {
         addDebugMessage('No auction data in response');
-        setError('Failed to load auction data');
+        throw new Error('Failed to load auction data');
+      }
+      
+      // Update auction with the accurate player counts we fetched first
+      const updatedAuction = {
+        ...auctionResponse.data.auction,
+        settings: {
+          ...auctionResponse.data.auction.settings,
+          totalPlayers: playerStats.totalPlayers,
+          availablePlayersCount: playerStats.availablePlayers
+        }
+      };
+      
+      addDebugMessage('Full auction data received with accurate player counts');
+      setAuction(updatedAuction);
+      
+      // If manager role, find current manager
+      if (role === 'manager' && managerId && updatedAuction.managers) {
+        const manager = updatedAuction.managers.find(
+          (m: Manager) => m.id === managerId
+        );
+        setCurrentManager(manager || null);
       }
     } catch (err) {
       addDebugMessage(`Error fetching full auction: ${err instanceof Error ? err.message : String(err)}`);
