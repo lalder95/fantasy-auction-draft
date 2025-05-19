@@ -1,4 +1,4 @@
-// components/auction/AuctionRoom.tsx
+// components/auction/AuctionRoom.tsx - Modified to handle optimized Pusher updates
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
@@ -40,58 +40,56 @@ export default function AuctionRoom({
     console.log(`DEBUG: ${message}`);
   };
   
+  // Fetch full auction data function
+  const fetchFullAuction = useCallback(async () => {
+    try {
+      addDebugMessage(`Fetching full auction data for ID: ${auctionId}`);
+      const response = await axios.get(`/api/auction/${auctionId}`, {
+        params: { role, managerId, sessionId }
+      });
+      
+      if (response.data.auction) {
+        addDebugMessage('Full auction data received successfully');
+        setAuction(response.data.auction);
+        
+        // If manager role, find current manager
+        if (role === 'manager' && managerId && response.data.auction.managers) {
+          const manager = response.data.auction.managers.find(
+            (m: Manager) => m.id === managerId
+          );
+          setCurrentManager(manager || null);
+        }
+      } else {
+        addDebugMessage('No auction data in response');
+        setError('Failed to load auction data');
+      }
+    } catch (err) {
+      addDebugMessage(`Error fetching full auction: ${err instanceof Error ? err.message : String(err)}`);
+      setError('Failed to load auction data. Please try again.');
+    }
+  }, [auctionId, role, managerId, sessionId]);
+  
   // Initialize Pusher and fetch auction data
   useEffect(() => {
     // Import expiration checker dynamically to avoid server-side rendering issues
     import('../../lib/expiration-checker').then(({ ExpirationChecker }) => {
       // Initial fetch of auction data
-      const fetchAuction = async () => {
-        try {
-          addDebugMessage(`Fetching auction data for ID: ${auctionId}`);
-          const response = await axios.get(`/api/auction/${auctionId}`, {
-            params: { role, managerId, sessionId }
-          });
-          
-          if (response.data.auction) {
-            addDebugMessage('Auction data received successfully');
-            setAuction(response.data.auction);
-            
-            // If manager role, find current manager
-            if (role === 'manager' && managerId && response.data.auction.managers) {
-              const manager = response.data.auction.managers.find(
-                (m: Manager) => m.id === managerId
-              );
-              setCurrentManager(manager || null);
-            }
-            
-            setConnectionStatus('connected');
-            
-            // Start expiration checker if commissioner and auction is active
-            if (role === 'commissioner' && response.data.auction.status === 'active') {
-              addDebugMessage('Starting expiration checker (commissioner only)');
-              const checker = new ExpirationChecker(
-                auctionId, 
-                process.env.NEXT_PUBLIC_AUCTION_WORKER_SECRET || 'dev-secret'
-              );
-              checker.start(1000); // Check every second
-              
-              // Store in component state for cleanup
-              setExpirationChecker(checker);
-            }
-          } else {
-            addDebugMessage('No auction data in response');
-            setError('Failed to load auction data');
-          }
-          
-          setLoading(false);
-        } catch (err) {
-          addDebugMessage(`Error fetching auction: ${err instanceof Error ? err.message : String(err)}`);
-          setError('Failed to load auction data. Please try again.');
-          setLoading(false);
-        }
-      };
+      fetchFullAuction().then(() => {
+        setLoading(false);
+      });
       
-      fetchAuction();
+      // Start expiration checker if commissioner
+      if (role === 'commissioner') {
+        addDebugMessage('Starting expiration checker (commissioner only)');
+        const checker = new ExpirationChecker(
+          auctionId, 
+          process.env.NEXT_PUBLIC_AUCTION_WORKER_SECRET || 'dev-secret'
+        );
+        checker.start(1000); // Check every second
+        
+        // Store in component state for cleanup
+        setExpirationChecker(checker);
+      }
     });
     
     // Subscribe to Pusher channel for real-time updates
@@ -116,15 +114,88 @@ export default function AuctionRoom({
       setError(`Connection error: ${err.message}`);
     });
     
-    // Handle auction updates
-    channel.bind('auction-update', (data: { auction: Auction }) => {
+    // Handle auction updates - modified to support optimized updates
+    channel.bind('auction-update', (data: { auction?: Auction, updateInfo?: any, fullUpdateNeeded?: boolean }) => {
       addDebugMessage('Received auction update from Pusher');
-      setAuction(data.auction);
       
-      // Update current manager if needed
-      if (role === 'manager' && managerId && data.auction.managers) {
-        const manager = data.auction.managers.find(m => m.id === managerId);
-        setCurrentManager(manager || null);
+      if (data.auction) {
+        // Full auction update (legacy format)
+        addDebugMessage('Received full auction data');
+        setAuction(data.auction);
+        
+        // Update current manager if needed
+        if (role === 'manager' && managerId && data.auction.managers) {
+          const manager = data.auction.managers.find(m => m.id === managerId);
+          setCurrentManager(manager || null);
+        }
+      } else if (data.updateInfo) {
+        // Partial update with optimized payload
+        addDebugMessage(`Received partial update: ${data.updateInfo.updateType}`);
+        
+        if (data.fullUpdateNeeded) {
+          // Fetch full auction data if needed
+          addDebugMessage('Full update required, fetching complete auction data');
+          fetchFullAuction();
+        } else {
+          // Apply partial update to existing auction state
+          setAuction(prevAuction => {
+            if (!prevAuction) return null;
+            
+            // Create a new auction object with the updated properties
+            const updatedAuction = { ...prevAuction };
+            
+            // Update auction status if provided
+            if (data.updateInfo.status) {
+              updatedAuction.status = data.updateInfo.status;
+            }
+            
+            // Update nomination manager index if provided
+            if (data.updateInfo.currentNominationManagerIndex !== undefined) {
+              updatedAuction.currentNominationManagerIndex = data.updateInfo.currentNominationManagerIndex;
+            }
+            
+            // Update specific player if provided
+            if (data.updateInfo.affectedPlayer) {
+              const { playerId } = data.updateInfo.affectedPlayer;
+              const playerIndex = updatedAuction.playersUp.findIndex(p => p.playerId === playerId);
+              
+              if (playerIndex >= 0) {
+                updatedAuction.playersUp = [
+                  ...updatedAuction.playersUp.slice(0, playerIndex),
+                  { 
+                    ...updatedAuction.playersUp[playerIndex],
+                    ...data.updateInfo.affectedPlayer
+                  },
+                  ...updatedAuction.playersUp.slice(playerIndex + 1)
+                ];
+              }
+            }
+            
+            // Update specific manager if provided
+            if (data.updateInfo.affectedManager) {
+              const { id } = data.updateInfo.affectedManager;
+              const managerIndex = updatedAuction.managers.findIndex(m => m.id === id);
+              
+              if (managerIndex >= 0) {
+                updatedAuction.managers = [
+                  ...updatedAuction.managers.slice(0, managerIndex),
+                  { 
+                    ...updatedAuction.managers[managerIndex],
+                    ...data.updateInfo.affectedManager
+                  },
+                  ...updatedAuction.managers.slice(managerIndex + 1)
+                ];
+                
+                // Update current manager if needed
+                if (role === 'manager' && managerId === id) {
+                  setCurrentManager(updatedAuction.managers[managerIndex]);
+                }
+              }
+            }
+            
+            return updatedAuction;
+          });
+        }
       }
     });
     
@@ -150,7 +221,7 @@ export default function AuctionRoom({
         expirationChecker.stop();
       }
     };
-  }, [auctionId, role, managerId, sessionId]);
+  }, [auctionId, role, managerId, sessionId, fetchFullAuction]);
   
   // Determine if current manager can nominate
   const canNominate = useCallback(() => {
@@ -336,7 +407,7 @@ export default function AuctionRoom({
           </h1>
           
           <div className="text-sm">
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full ${
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
               connectionStatus === 'connected' ? 'bg-green-100 text-green-800' : 
               connectionStatus === 'connecting' ? 'bg-yellow-100 text-yellow-800' : 
               'bg-red-100 text-red-800'

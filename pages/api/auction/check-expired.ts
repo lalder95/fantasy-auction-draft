@@ -44,12 +44,35 @@ export default async function handler(
       // Save changes
       await saveAuction(updatedAuction);
       
+      // Create a minimal update object for Pusher to avoid size limits
+      const minimalUpdate = {
+        id: updatedAuction.id,
+        status: updatedAuction.status,
+        playersUp: updatedAuction.playersUp.map(p => ({
+          playerId: p.playerId,
+          status: p.status,
+          currentBid: p.currentBid,
+          currentBidder: p.currentBidder,
+          endTime: p.endTime
+        })),
+        completedPlayers: updatedAuction.completedPlayers.map(p => ({
+          playerId: p.playerId,
+          name: p.name,
+          position: p.position,
+          team: p.team,
+          finalBid: p.finalBid,
+          winner: p.winner
+        })),
+        updateType: 'expiration'
+      };
+      
       // Notify clients via Pusher
       const pusher = getPusherServer();
       await pusher.trigger(`auction-${auctionId}`, 'auction-update', {
-        auction: updatedAuction,
+        updateInfo: minimalUpdate,
         action: 'EXPIRE_AUCTIONS',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        fullUpdateNeeded: true // Flag to tell client to fetch the full auction data
       });
       
       return res.status(200).json({ 
