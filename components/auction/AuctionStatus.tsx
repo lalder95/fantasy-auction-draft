@@ -1,4 +1,4 @@
-// components/auction/AuctionStatus.tsx - Fixed version
+// components/auction/AuctionStatus.tsx - Updated version
 import React from 'react';
 import { Auction, Manager } from '../../lib/auction';
 
@@ -57,6 +57,22 @@ export default function AuctionStatus({
   const isCurrentManagerNominating = nominatingManager && currentManager && 
     nominatingManager.id === currentManager.id;
   
+  // Determine total player count from settings or direct calculation
+  const getTotalPlayerCount = () => {
+    if (auction.settings && 'totalPlayers' in auction.settings) {
+      return auction.settings.totalPlayers as number;
+    }
+    
+    // Fallback calculation
+    return (
+      (auction.availablePlayers?.length || 0) + 
+      (auction.playersUp?.length || 0) + 
+      (auction.completedPlayers?.length || 0)
+    );
+  };
+  
+  const totalPlayerCount = getTotalPlayerCount();
+  
   return (
     <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -82,7 +98,7 @@ export default function AuctionStatus({
             Players Auctioned:
           </span>
           <span className="font-medium">
-            {auction.completedPlayers.length} of {auction.completedPlayers.length + auction.availablePlayers.length + auction.playersUp.length}
+            {auction.completedPlayers.length} of {totalPlayerCount}
           </span>
         </div>
         
@@ -93,8 +109,6 @@ export default function AuctionStatus({
               Nomination Rounds:
             </span>
             <span className="font-medium">
-              {/* This would require additional tracking to show current round */}
-              {/* For now, just show the target */}
               Target: {auction.settings.nominationRounds} rounds
             </span>
           </div>

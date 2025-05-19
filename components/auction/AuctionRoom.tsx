@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
-import { Auction, Manager, PlayerUp } from '../../lib/auction';
+import { Auction, Manager } from '../../lib/auction-types';
 import { getPusherClient } from '../../lib/pusher-client';
 import AuctionStatus from './AuctionStatus';
 import PlayerCard from './PlayerCard';
