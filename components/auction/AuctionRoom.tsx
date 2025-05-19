@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
-import { Auction, Manager } from '../../lib/auction-types';
+import { Auction, Manager } from '../../lib/auction';
 import { getPusherClient } from '../../lib/pusher-client';
 import AuctionStatus from './AuctionStatus';
 import PlayerCard from './PlayerCard';
@@ -468,7 +468,7 @@ export default function AuctionRoom({
               </div>
             ) : (
               <div className="space-y-4">
-                {auction.playersUp.map((player: PlayerUp) => (
+                {auction.playersUp.map((player) => (
                   <PlayerCard
                     key={player.playerId}
                     player={player}
