@@ -1,4 +1,4 @@
-// pages/api/auction/players.ts - Complete rewrite with robust transaction handling
+// pages/api/auction/players.ts - Update to store expected player count
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Pool } from 'pg';
 
@@ -57,7 +57,7 @@ export default async function handler(
     
     // Verify auction exists before proceeding
     const auctionResult = await client.query(
-      'SELECT id FROM auctions WHERE id = $1', 
+      'SELECT id, settings FROM auctions WHERE id = $1', 
       [auctionId]
     );
     
@@ -66,8 +66,11 @@ export default async function handler(
       return res.status(404).json({ message: 'Auction not found' });
     }
     
+    // Record the expected player count for future verification
+    const expectedPlayerCount = availablePlayers.length;
+    
     // Log the total players we're about to process
-    console.log(`Processing ${availablePlayers.length} players for auction ${auctionId}`);
+    console.log(`Processing ${expectedPlayerCount} players for auction ${auctionId}`);
     
     if (availablePlayers.length > 0) {
       // Start a SINGLE transaction for the entire operation
@@ -159,22 +162,37 @@ export default async function handler(
           // Still proceed with commit since the database count is what matters
         }
         
-        // Update auction with player count
+        // Store the EXPECTED player count in auction settings
+        // This is the key change - we record how many players were supposed to be added
         await client.query(
           `UPDATE auctions 
-           SET settings = settings || 
-             jsonb_build_object(
-               'availablePlayersCount', $1::int,
-               'totalPlayers', $1::int
-             )
-           WHERE id = $2`,
-          [actualCount, auctionId]
+           SET settings = jsonb_set(
+             jsonb_set(
+               jsonb_set(
+                 settings, 
+                 '{availablePlayersCount}', 
+                 $1::text::jsonb
+               ),
+               '{totalPlayers}', 
+               $2::text::jsonb
+             ),
+             '{expectedPlayerCount}', 
+             $3::text::jsonb
+           )
+           WHERE id = $4`,
+          [
+            actualCount.toString(),
+            actualCount.toString(),
+            expectedPlayerCount.toString(),
+            auctionId
+          ]
         );
         
         // Now commit the entire transaction
         await client.query('COMMIT');
         
         console.log(`Successfully imported ${actualCount} players for auction ${auctionId}`);
+        console.log(`Stored expected player count (${expectedPlayerCount}) in auction settings`);
         
         // Success response with detailed counts
         return res.status(200).json({
@@ -183,7 +201,7 @@ export default async function handler(
           successCount,
           errorCount,
           actualCount,
-          expectedTotal: availablePlayers.length
+          expectedPlayerCount
         });
       } catch (error) {
         // Roll back the entire transaction if any part fails
@@ -201,7 +219,8 @@ export default async function handler(
         success: true,
         message: 'No players to process',
         successCount: 0,
-        errorCount: 0
+        errorCount: 0,
+        expectedPlayerCount: 0
       });
     }
   } catch (error) {

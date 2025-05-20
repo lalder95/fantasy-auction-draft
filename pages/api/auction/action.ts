@@ -1,4 +1,4 @@
-// pages/api/auction/action.ts - Modified to send optimized Pusher updates
+// pages/api/auction/action.ts - Enhanced with clear event types for player pool updates
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAuction, saveAuction } from '../../../lib/database-neon';
 import { getPusherServer } from '../../../lib/pusher-server';
@@ -13,6 +13,7 @@ import {
   removePlayerFromAuction,
   cancelBid,
   updateManagerBudget,
+  expireAuctions,
 } from '../../../lib/auction';
 
 // Define a type for Pusher errors
@@ -52,10 +53,6 @@ export default async function handler(
           return res.status(400).json({ message: 'Player ID, manager ID, and bid amount are required for BID action' });
         }
         try {
-          // Store pre-update state for comparison
-          const playerBeforeUpdate = auction.playersUp.find(p => p.playerId === playerId);
-          const managerBeforeUpdate = auction.managers.find(m => m.id === managerId);
-          
           // Apply the bid
           updatedAuction = placeBid(auction, managerId, playerId, bidAmount);
           
@@ -73,8 +70,7 @@ export default async function handler(
               passes: [], // Reset passes after a bid
               endTime: updatedPlayer.endTime // In case end time was adjusted
             } : null,
-            affectedManager: updatedManager && managerBeforeUpdate && 
-                             updatedManager.budget !== managerBeforeUpdate.budget ? {
+            affectedManager: updatedManager ? {
               id: updatedManager.id,
               budget: updatedManager.budget
             } : null
@@ -100,9 +96,6 @@ export default async function handler(
           return res.status(400).json({ message: 'Player ID and manager ID are required for PASS action' });
         }
         try {
-          // Store pre-update state
-          const playerBeforePass = auction.playersUp.find(p => p.playerId === playerId);
-          
           // Apply the pass
           updatedAuction = passOnPlayer(auction, managerId, playerId);
           
@@ -138,14 +131,16 @@ export default async function handler(
           return res.status(400).json({ message: 'Player ID and manager ID are required for NOMINATE action' });
         }
         try {
-          // This will cause substantial changes - indicate that full refresh is needed
+          // This will cause player pool changes
           updatedAuction = nominatePlayer(auction, managerId, playerId, bidAmount || 1);
           
-          // For nomination, send only basic info - client will fetch full data
+          // For nomination, include player ID info for player pool management
           updateInfo = {
             updateType: 'NOMINATE',
-            fullUpdateNeeded: true, // Signal client to fetch complete data
-            currentNominationManagerIndex: updatedAuction.currentNominationManagerIndex
+            nominatedPlayerId: playerId,
+            currentNominationManagerIndex: updatedAuction.currentNominationManagerIndex,
+            // Include the new player up information
+            newPlayerUp: updatedAuction.playersUp.find(p => p.playerId === playerId)
           };
         } catch (error) {
           const pusher = getPusherServer();
@@ -169,9 +164,6 @@ export default async function handler(
         try {
           // Use commissioner ID for commissioner actions
           const commissionerId = auction.commissionerId;
-          
-          // Store pre-update state
-          const playerBeforeTimeAdjust = auction.playersUp.find(p => p.playerId === playerId);
           
           // Apply the time adjustment
           updatedAuction = adjustAuctionTime(auction, playerId, commissionerId, secondsToAdjust);
@@ -233,14 +225,20 @@ export default async function handler(
         
       case 'END_AUCTION':
         try {
-          // For end auction, signal clients to get a full update
           const commissionerId = auction.commissionerId;
           updatedAuction = endAuction(auction, commissionerId);
           
           updateInfo = {
             updateType: 'END_AUCTION',
             status: updatedAuction.status,
-            fullUpdateNeeded: true
+            // Include completed players info for any players that were up for auction
+            completedPlayers: updatedAuction.completedPlayers
+              .filter(p => auction.playersUp.some(up => up.playerId === p.playerId))
+              .map(p => ({
+                playerId: p.playerId,
+                finalBid: p.finalBid,
+                winner: p.winner
+              }))
           };
         } catch (error) {
           return res.status(400).json({ 
@@ -256,12 +254,19 @@ export default async function handler(
         }
         try {
           const commissionerId = auction.commissionerId;
+          
+          // First find the player details before removing
+          const playerDetails = auction.playersUp.find(p => p.playerId === playerId);
+          
           updatedAuction = removePlayerFromAuction(auction, playerId, commissionerId);
           
-          // Signal for full update since this changes available players
+          // Include player details in the update for client-side management
           updateInfo = {
             updateType: 'REMOVE_PLAYER',
-            fullUpdateNeeded: true
+            removedPlayerId: playerId,
+            playerDetails: playerDetails || null,
+            // Include the player back in available players if found
+            returnToAvailable: true
           };
         } catch (error) {
           return res.status(400).json({ 
@@ -277,9 +282,6 @@ export default async function handler(
         }
         try {
           const commissionerId = auction.commissionerId;
-          
-          // Store pre-update state
-          const playerBeforeCancel = auction.playersUp.find(p => p.playerId === playerId);
           
           // Apply the bid cancellation
           updatedAuction = cancelBid(auction, playerId, commissionerId);
@@ -326,6 +328,48 @@ export default async function handler(
         } catch (error) {
           return res.status(400).json({ 
             message: 'Failed to update budget',
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        break;
+        
+      case 'EXPIRE_AUCTIONS':
+        try {
+          // Check for expired auctions
+          const auctionBefore = JSON.parse(JSON.stringify(auction)); // Deep clone for comparison
+          updatedAuction = expireAuctions(auction);
+          
+          // Find which players were completed
+          const newlyCompletedPlayerIds = updatedAuction.completedPlayers
+            .filter(p => !auctionBefore.completedPlayers.some((cp: {playerId: string}) => cp.playerId === p.playerId))
+            .map(p => p.playerId);
+          
+          // Only create update if something changed
+          if (newlyCompletedPlayerIds.length > 0) {
+            // Get details for completed players
+            const completedPlayerDetails = newlyCompletedPlayerIds.map(id => {
+              const player = updatedAuction.completedPlayers.find(p => p.playerId === id);
+              return player ? {
+                playerId: player.playerId,
+                winningManagerId: player.winner,
+                finalBid: player.finalBid
+              } : null;
+            }).filter(Boolean);
+            
+            updateInfo = {
+              updateType: 'EXPIRE_AUCTIONS',
+              completedPlayers: completedPlayerDetails
+            };
+          } else {
+            // No players were completed
+            updateInfo = {
+              updateType: 'EXPIRE_AUCTIONS',
+              completedPlayers: []
+            };
+          }
+        } catch (error) {
+          return res.status(400).json({ 
+            message: 'Failed to check expired auctions',
             error: error instanceof Error ? error.message : String(error)
           });
         }
