@@ -9,6 +9,7 @@ import PlayerCard from './PlayerCard';
 import BidInterface from './BidInterface';
 import PlayerQueue from './PlayerQueue';
 import CommissionerControls from './CommissionerControls';
+import PlayerCountDebugger from '../diagnostic/PlayerCountDebugger';
 
 interface AuctionRoomProps {
   auctionId: string;
@@ -31,6 +32,7 @@ export default function AuctionRoom({
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('connecting');
   const [expirationChecker, setExpirationChecker] = useState<any>(null);
   const [debug, setDebug] = useState<string[]>([]);
+  const [showDebugger, setShowDebugger] = useState(false);
 
   const addDebugMessage = (message: string) => {
     setDebug(prev => {
@@ -40,32 +42,32 @@ export default function AuctionRoom({
     console.log(`DEBUG: ${message}`);
   };
   
-  // Fetch full auction data function
+  // Improved fetch full auction data function
   const fetchFullAuction = useCallback(async () => {
     try {
       addDebugMessage(`Fetching full auction data for ID: ${auctionId}`);
       
-      // FIRST fetch player stats to ensure we have accurate counts
-      // before getting full auction data
-      const statsResponse = await axios.get(`/api/auction/player-stats`, {
-        params: { auctionId }
-      });
-      
-      if (!statsResponse.data.success) {
-        addDebugMessage('Failed to fetch player stats');
-        throw new Error('Failed to fetch player stats');
+      // First, ensure player counts are accurate by calling the fix endpoint
+      if (role === 'commissioner') {
+        try {
+          addDebugMessage('Running player count verification...');
+          const fixResponse = await fetch('/api/auction/fix-player-count', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auctionId })
+          });
+          
+          if (fixResponse.ok) {
+            const fixData = await fixResponse.json();
+            addDebugMessage(`Player count verification complete: ${fixData.duplicatesRemoved} duplicates removed`);
+          }
+        } catch (fixError) {
+          addDebugMessage(`Player count verification failed: ${fixError}`);
+          // Continue anyway - this is not critical
+        }
       }
       
-      const playerStats = {
-        totalPlayers: statsResponse.data.totalPlayers,
-        availablePlayers: statsResponse.data.availablePlayers,
-        playersUp: statsResponse.data.playersUp,
-        completedPlayers: statsResponse.data.completedPlayers
-      };
-      
-      addDebugMessage(`Player stats fetched successfully: Total=${playerStats.totalPlayers}, Available=${playerStats.availablePlayers}, Up=${playerStats.playersUp}, Completed=${playerStats.completedPlayers}`);
-      
-      // NOW fetch the auction with the knowledge of accurate player counts
+      // Now fetch the auction data with accurate counts
       const auctionResponse = await axios.get(`/api/auction/${auctionId}`, {
         params: { role, managerId, sessionId }
       });
@@ -75,26 +77,48 @@ export default function AuctionRoom({
         throw new Error('Failed to load auction data');
       }
       
-      // Update auction with the accurate player counts we fetched first
-      const updatedAuction = {
-        ...auctionResponse.data.auction,
-        settings: {
-          ...auctionResponse.data.auction.settings,
-          totalPlayers: playerStats.totalPlayers,
-          availablePlayersCount: playerStats.availablePlayers
-        }
-      };
+      // Fetch player stats separately to get the most current counts
+      const statsResponse = await axios.get(`/api/auction/player-stats`, {
+        params: { auctionId }
+      });
       
-      addDebugMessage('Full auction data received with accurate player counts');
-      setAuction(updatedAuction);
+      if (statsResponse.data.success) {
+        // Update auction with the latest player counts
+        const updatedAuction = {
+          ...auctionResponse.data.auction,
+          settings: {
+            ...auctionResponse.data.auction.settings,
+            totalPlayers: statsResponse.data.totalPlayers,
+            availablePlayersCount: statsResponse.data.availablePlayers
+          }
+        };
+        
+        addDebugMessage(`Auction data updated with verified counts - Total: ${statsResponse.data.totalPlayers}, Available: ${statsResponse.data.availablePlayers}`);
+        setAuction(updatedAuction);
+        
+        // If manager role, find current manager
+        if (role === 'manager' && managerId && updatedAuction.managers) {
+          const manager = updatedAuction.managers.find(
+            (m: Manager) => m.id === managerId
+          );
+          setCurrentManager(manager || null);
+        }
+        
+        return;
+      }
+      
+      // Fallback: use auction data as-is if stats fetch fails
+      addDebugMessage('Using auction data without player stats verification');
+      setAuction(auctionResponse.data.auction);
       
       // If manager role, find current manager
-      if (role === 'manager' && managerId && updatedAuction.managers) {
-        const manager = updatedAuction.managers.find(
+      if (role === 'manager' && managerId && auctionResponse.data.auction.managers) {
+        const manager = auctionResponse.data.auction.managers.find(
           (m: Manager) => m.id === managerId
         );
         setCurrentManager(manager || null);
       }
+      
     } catch (err) {
       addDebugMessage(`Error fetching full auction: ${err instanceof Error ? err.message : String(err)}`);
       setError('Failed to load auction data. Please try again.');
@@ -225,6 +249,82 @@ export default function AuctionRoom({
               }
             }
             
+            // Handle player removals
+            if (data.updateInfo.updateType === 'REMOVE_PLAYER' && data.updateInfo.removedPlayerId) {
+              updatedAuction.playersUp = updatedAuction.playersUp.filter(
+                p => p.playerId !== data.updateInfo.removedPlayerId
+              );
+              
+              // If we have player details and it should return to available, add it back
+              if (data.updateInfo.returnToAvailable && data.updateInfo.playerDetails) {
+                // This would require fetching the full player data, so trigger a full refresh
+                fetchFullAuction();
+              }
+            }
+            
+            // Handle nominations
+            if (data.updateInfo.updateType === 'NOMINATE' && data.updateInfo.newPlayerUp) {
+              updatedAuction.playersUp.push(data.updateInfo.newPlayerUp);
+              
+              // Remove from available players if we have the ID
+              if (data.updateInfo.nominatedPlayerId) {
+                updatedAuction.availablePlayers = updatedAuction.availablePlayers.filter(
+                  p => p.player_id !== data.updateInfo.nominatedPlayerId
+                );
+              }
+            }
+            
+            // Handle completed players
+            if (data.updateInfo.completedPlayers && data.updateInfo.completedPlayers.length > 0) {
+              data.updateInfo.completedPlayers.forEach((completed: any) => {
+                // Remove from playersUp
+                const playerUpIndex = updatedAuction.playersUp.findIndex(
+                  p => p.playerId === completed.playerId
+                );
+                
+                if (playerUpIndex >= 0) {
+                  const playerUp = updatedAuction.playersUp[playerUpIndex];
+                  
+                  // Add to completed
+                  updatedAuction.completedPlayers.push({
+                    ...playerUp,
+                    finalBid: completed.finalBid,
+                    winner: completed.winningManagerId || completed.winner,
+                    status: 'completed'
+                  } as any);
+                  
+                  // Remove from playersUp
+                  updatedAuction.playersUp = [
+                    ...updatedAuction.playersUp.slice(0, playerUpIndex),
+                    ...updatedAuction.playersUp.slice(playerUpIndex + 1)
+                  ];
+                  
+                  // Update winning manager's budget and won players
+                  const winningManagerIndex = updatedAuction.managers.findIndex(
+                    m => m.id === (completed.winningManagerId || completed.winner)
+                  );
+                  
+                  if (winningManagerIndex >= 0) {
+                    const winningManager = updatedAuction.managers[winningManagerIndex];
+                    updatedAuction.managers = [
+                      ...updatedAuction.managers.slice(0, winningManagerIndex),
+                      {
+                        ...winningManager,
+                        budget: winningManager.budget - completed.finalBid,
+                        wonPlayers: [...winningManager.wonPlayers, completed.playerId]
+                      },
+                      ...updatedAuction.managers.slice(winningManagerIndex + 1)
+                    ];
+                    
+                    // Update current manager if it's the winning manager
+                    if (role === 'manager' && managerId === winningManager.id) {
+                      setCurrentManager(updatedAuction.managers[winningManagerIndex]);
+                    }
+                  }
+                }
+              });
+            }
+            
             return updatedAuction;
           });
         }
@@ -339,6 +439,30 @@ export default function AuctionRoom({
     return makeAuctionAction('BID', { playerId, bidAmount, managerId });
   }, [auctionId]);
   
+  // Manual verify player count
+  const handleVerifyPlayerCount = useCallback(async () => {
+    try {
+      addDebugMessage('Manual player count verification requested');
+      const response = await fetch('/api/auction/fix-player-count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auctionId })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        addDebugMessage(`Player count verification complete: ${JSON.stringify(data.counts)}`);
+        // Refresh the auction data
+        await fetchFullAuction();
+      } else {
+        addDebugMessage('Player count verification failed');
+      }
+    } catch (error) {
+      console.error('Failed to verify player count:', error);
+      addDebugMessage(`Error verifying player count: ${error}`);
+    }
+  }, [auctionId, fetchFullAuction]);
+  
   // Manual retry connection button handler
   const handleRetryConnection = () => {
     addDebugMessage('Manual retry connection requested');
@@ -438,7 +562,7 @@ export default function AuctionRoom({
             {auction.settings.leagueName} Auction
           </h1>
           
-          <div className="text-sm">
+          <div className="flex items-center space-x-4">
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
               connectionStatus === 'connected' ? 'bg-green-100 text-green-800' : 
               connectionStatus === 'connecting' ? 'bg-yellow-100 text-yellow-800' : 
@@ -446,6 +570,15 @@ export default function AuctionRoom({
             }`}>
               {connectionStatus}
             </span>
+            
+            {role === 'commissioner' && (
+              <button
+                onClick={() => setShowDebugger(!showDebugger)}
+                className="text-xs text-gray-500 hover:text-gray-700"
+              >
+                {showDebugger ? 'Hide' : 'Show'} Debugger
+              </button>
+            )}
           </div>
         </div>
         
@@ -548,16 +681,39 @@ export default function AuctionRoom({
           
           {/* Sidebar - controls and info */}
           <div className="space-y-6">
-            {/* Commissioner controls */}
+            {/* Commissioner controls with verify button */}
             {role === 'commissioner' && (
-              <CommissionerControls
-                auction={auction}
-                onPauseAuction={handlePauseAuction}
-                onResumeAuction={handleResumeAuction}
-                onEndAuction={handleEndAuction}
-                onUpdateManagerBudget={handleUpdateManagerBudget}
-                onNominateForManager={handleNominateForManager}
-              />
+              <>
+                <CommissionerControls
+                  auction={auction}
+                  onPauseAuction={handlePauseAuction}
+                  onResumeAuction={handleResumeAuction}
+                  onEndAuction={handleEndAuction}
+                  onUpdateManagerBudget={handleUpdateManagerBudget}
+                  onNominateForManager={handleNominateForManager}
+                />
+                
+                {/* Verify Player Count Button */}
+                <div className="bg-white shadow-md rounded-lg overflow-hidden border border-gray-200">
+                  <div className="p-4">
+                    <button
+                      type="button"
+                      onClick={handleVerifyPlayerCount}
+                      className="w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      Verify Player Count
+                    </button>
+                    <p className="mt-2 text-xs text-gray-500">
+                      Use this if player counts seem incorrect
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
+            
+            {/* Player Count Debugger - for commissioner only */}
+            {role === 'commissioner' && showDebugger && (
+              <PlayerCountDebugger auctionId={auctionId} />
             )}
             
             {/* Bid/Nomination interface for managers */}

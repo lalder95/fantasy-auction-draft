@@ -1,6 +1,4 @@
-// components/diagnostic/PlayerCountDebugger.tsx
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 
 interface PlayerCountDebuggerProps {
   auctionId: string;
@@ -18,12 +16,16 @@ export default function PlayerCountDebugger({ auctionId }: PlayerCountDebuggerPr
       setError(null);
       
       try {
-        const response = await axios.get(`/api/auction/player-stats-diagnostic`, {
-          params: { auctionId }
-        });
+        const response = await fetch(`/api/auction/player-stats-diagnostic?auctionId=${auctionId}`);
         
-        if (response.data.success) {
-          setDiagnosticData(response.data);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          setDiagnosticData(data);
         } else {
           setError('Failed to fetch diagnostic data');
         }
@@ -41,17 +43,52 @@ export default function PlayerCountDebugger({ auctionId }: PlayerCountDebuggerPr
     setRefreshCount(prev => prev + 1);
   };
   
+  const handleFixMismatch = async () => {
+    try {
+      setLoading(true);
+      // Force a recount and fix
+      const response = await fetch('/api/auction/fix-player-count', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ auctionId })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      handleRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+  
   return (
     <div className="bg-white shadow-md rounded-lg p-4 mt-4">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium">Player Count Diagnostic</h3>
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {loading ? 'Loading...' : 'Refresh'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
+          {diagnosticData && !diagnosticData.diagnostics.countMatch && (
+            <button
+              onClick={handleFixMismatch}
+              disabled={loading}
+              className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+            >
+              Fix Mismatch
+            </button>
+          )}
+        </div>
       </div>
       
       {error && (
