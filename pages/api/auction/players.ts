@@ -1,4 +1,4 @@
-// pages/api/auction/players.ts - Update to store expected player count
+// pages/api/auction/players.ts - Complete updated version with status field
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Pool } from 'pg';
 
@@ -88,16 +88,17 @@ export default async function handler(
         let successCount = 0;
         let errorCount = 0;
         
-        // Prepare parameterized query - much more efficient
+        // Prepare parameterized query - now includes status field
         const insertQuery = `
           INSERT INTO available_players (
-            player_id, auction_id, full_name, position, team, years_exp
+            player_id, auction_id, full_name, position, team, status, years_exp
           )
-          VALUES ($1, $2, $3, $4, $5, $6)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
           ON CONFLICT (player_id, auction_id) DO UPDATE SET
             full_name = EXCLUDED.full_name,
             position = EXCLUDED.position,
             team = EXCLUDED.team,
+            status = EXCLUDED.status,
             years_exp = EXCLUDED.years_exp
         `;
         
@@ -124,6 +125,7 @@ export default async function handler(
               const fullName = String(player.full_name || 'Unknown Player').slice(0, 200);
               const position = String(player.position || 'UNKNOWN').slice(0, 10);
               const team = player.team ? String(player.team).slice(0, 10) : null;
+              const status = String(player.status || 'Active').slice(0, 50); // Include status field
               const yearsExp = typeof player.years_exp === 'number' ? 
                 player.years_exp : 
                 (parseInt(String(player.years_exp || '0')) || 0);
@@ -133,7 +135,8 @@ export default async function handler(
                 auctionId,
                 fullName,
                 position,
-                team, 
+                team,
+                status, // Include status in parameters
                 yearsExp
               ]);
               
