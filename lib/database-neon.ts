@@ -35,6 +35,16 @@ export async function getAuction(id: string): Promise<Auction | null> {
   return auction;
 }
 
+export async function validateManagerSession(sessionToken: string, auctionId: string): Promise<boolean> {
+  const result = await sql`
+    SELECT 1 FROM managers
+    WHERE session_token = ${sessionToken} AND auction_id = ${auctionId}
+    LIMIT 1
+  `;
+  return result.length > 0;
+}
+
+
 // Function to save or update an auction
 export async function saveAuction(auction: Auction): Promise<void> {
   await sql`
