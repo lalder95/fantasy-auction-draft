@@ -631,21 +631,15 @@ function startAuctionTimer(auctionId: string) {
   // Check every second for expired auctions
   auctionIntervals[auctionId] = setInterval(async () => {
     try {
-      // Fetch the auction
+      // Get auction state
       const auction = await getAuction(auctionId);
-      if (!auction) {
-        stopAuctionTimer(auctionId);
-        return;
-      }
-      
-      // If auction is paused or completed, don't expire auctions
-      if (auction.status !== 'active') return;
-      
+      if (!auction) return;
+
       // Check for expired auctions
-      const updatedAuction = expireAuctions(auction);
+      const { updatedAuction, expiredCount } = expireAuctions(auction);
       
-      // Only save and broadcast if there were changes
-      if (updatedAuction !== auction) {
+      // Only save and broadcast if we had expirations
+      if (expiredCount > 0) {
         await saveAuction(updatedAuction);
         broadcastAuctionUpdate(updatedAuction);
       }

@@ -619,7 +619,7 @@ function startAuctionTimer(auctionId: string, io: SocketIOServer) {
       // Check for expired auctions
       const { updatedAuction, expiredCount } = expireAuctions(auction);
       
-      // Only save and broadcast if there were changes
+      // Only save and broadcast if we had expirations
       if (expiredCount > 0) {
         console.log(`Auction ${auctionId} - expiring auctions and updating`);
         await saveAuction(updatedAuction);
