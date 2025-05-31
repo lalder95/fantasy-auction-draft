@@ -121,6 +121,8 @@ export default function AuctionRoom({
   
   // Initialize Pusher and fetch auction data
   useEffect(() => {
+    let checker: any = null;
+
     // Import expiration checker dynamically to avoid server-side rendering issues
     import('../../lib/expiration-checker').then(({ ExpirationChecker }) => {
       // Initial fetch of auction data
@@ -131,13 +133,11 @@ export default function AuctionRoom({
       // Start expiration checker if commissioner
       if (role === 'commissioner') {
         addDebugMessage('Starting expiration checker (commissioner only)');
-        const checker = new ExpirationChecker(
+        checker = new ExpirationChecker(
           auctionId, 
           process.env.NEXT_PUBLIC_AUCTION_WORKER_SECRET || 'dev-secret'
         );
         checker.start(1000); // Check every second
-        
-        // Store in component state for cleanup
         setExpirationChecker(checker);
       }
     });
@@ -341,10 +341,10 @@ export default function AuctionRoom({
       channel.unbind_all();
       pusher.unsubscribe(channelName);
       
-      // Clean up expiration checker if it exists
-      if (expirationChecker) {
+      // Clean up expiration checker
+      if (checker) {
         addDebugMessage('Stopping expiration checker');
-        expirationChecker.stop();
+        checker.stop();
       }
     };
   }, [auctionId, role, managerId, sessionId, fetchFullAuction]);
