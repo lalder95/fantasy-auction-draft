@@ -8,10 +8,12 @@ interface AuctionStatusProps {
   role: 'commissioner' | 'manager' | 'viewer';
 }
 
-export default function AuctionStatus({
-  auction,
-  currentManager,
-}: AuctionStatusProps) {
+const AuctionStatus = ({ auction, currentManager, role }: AuctionStatusProps) => {
+  // Use the availablePlayers length or availablePlayersCount for total players
+  const totalPlayers = auction.availablePlayers?.length || 
+                      auction.settings.availablePlayersCount || 
+                      auction.settings.totalPlayers || 0;
+
   const getStatusTag = () => {
     switch (auction.status) {
       case 'setup':
@@ -57,79 +59,32 @@ export default function AuctionStatus({
   const isCurrentManagerNominating = nominatingManager && currentManager && 
     nominatingManager.id === currentManager.id;
   
-  // Determine total player count from settings or direct calculation
-  const getTotalPlayerCount = () => {
-    if (auction.settings && 'totalPlayers' in auction.settings) {
-      return auction.settings.totalPlayers as number;
-    }
-    
-    // Fallback calculation
-    return (
-      (auction.availablePlayers?.length || 0) + 
-      (auction.playersUp?.length || 0) + 
-      (auction.completedPlayers?.length || 0)
-    );
-  };
-  
-  const totalPlayerCount = getTotalPlayerCount();
-  
   return (
-    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center space-x-2">
-          <span className="text-sm font-medium text-gray-500">Status:</span>
-          {getStatusTag()}
-        </div>
-        
-        {auction.status === 'active' && (
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-500">
-              Current Nominator:
-            </span>
-            <span className={`font-medium ${isCurrentManagerNominating ? 'text-green-600' : ''}`}>
-              {nominatingManager ? nominatingManager.name : 'None'}
-              {isCurrentManagerNominating && " (You)"}
-            </span>
-          </div>
-        )}
-        
-        <div className="flex items-center space-x-2">
-          <span className="text-sm font-medium text-gray-500">
-            Players Auctioned:
-          </span>
-          <span className="font-medium">
-            {auction.completedPlayers.length} of {totalPlayerCount}
+    <div className="bg-white shadow-sm rounded-lg p-4">
+      <div className="grid grid-cols-3 gap-4">
+        <div>
+          <span className="text-sm text-gray-500">Status:</span>
+          <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            getStatusColor(auction.status)
+          }`}>
+            {auction.status}
           </span>
         </div>
-        
-        {/* Completion status based on auction type */}
-        {auction.settings.completionType === 'nominationRounds' ? (
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-500">
-              Nomination Rounds:
-            </span>
-            <span className="font-medium">
-              Target: {auction.settings.nominationRounds} rounds
-            </span>
-          </div>
-        ) : (
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-500">
-              Player Acquisition:
-            </span>
-            <span className="font-medium">
-              Target: {auction.settings.targetPlayersWon} per team
-            </span>
-          </div>
-        )}
-        
-        {currentManager && (
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-500">Your Budget:</span>
-            <span className="font-medium text-green-600">${currentManager.budget}</span>
-          </div>
-        )}
+        <div>
+          <span className="text-sm text-gray-500">Current Nominator:</span>
+          <span className="ml-2">
+            {getCurrentNominator(auction)}
+          </span>
+        </div>
+        <div>
+          <span className="text-sm text-gray-500">Players Auctioned:</span>
+          <span className="ml-2">
+            {auction.completedPlayers.length} of {totalPlayers}
+          </span>
+        </div>
       </div>
     </div>
   );
 }
+
+export default AuctionStatus;
