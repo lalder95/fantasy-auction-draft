@@ -18,6 +18,21 @@ interface DbTestResponse {
   location?: string;
 }
 
+interface AuctionInfo {
+  rows: Array<{
+    id: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+}
+
+interface CountResult {
+  rows: Array<{
+    count: string;
+  }>;
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<DbTestResponse>
@@ -42,10 +57,9 @@ export default async function handler(
     console.log('Auctions table exists:', tableExists);
 
     // Step 3: If table exists, get auction info
-    let auctionsInfo;
     if (tableExists) {
       console.log('Getting auction information...');
-      auctionsInfo = await sql`
+      const auctionsInfo = await sql`
         SELECT 
           id, 
           status, 
@@ -54,30 +68,41 @@ export default async function handler(
         FROM auctions 
         ORDER BY created_at DESC 
         LIMIT 5
-      `;
+      ` as AuctionInfo;
       
-      // Also get total count
-      const countResult = await sql`SELECT COUNT(*) as count FROM auctions`;
-      const totalCount = parseInt(countResult.rows[0].count) || 0;
+      // Get total count
+      const countResult = await sql`
+        SELECT COUNT(*) as count FROM auctions
+      ` as CountResult;
       
+      const totalCount = parseInt(countResult.rows[0]?.count) || 0;
       console.log(`Found ${totalCount} total auctions`);
+
+      // Return successful response with data
+      return res.status(200).json({
+        status: 'ok',
+        connectionTest: { 
+          test: Number(connectionTest.rows[0]?.test) || 0 
+        },
+        tableInfo: {
+          exists: true,
+          auctionCount: totalCount,
+          recentAuctions: auctionsInfo.rows.map(row => ({
+            id: String(row.id),
+            status: String(row.status),
+            created_at: String(row.created_at)
+          }))
+        }
+      });
     }
 
-    // Build the response with proper type checking
+    // Return successful response without auction data
     return res.status(200).json({
       status: 'ok',
       connectionTest: { 
         test: Number(connectionTest.rows[0]?.test) || 0 
       },
-      tableInfo: tableExists && auctionsInfo ? {
-        exists: true,
-        auctionCount: parseInt(String(countResult?.rows[0]?.count)) || 0,
-        recentAuctions: auctionsInfo.rows.map(row => ({
-          id: String(row.id),
-          status: String(row.status),
-          created_at: String(row.created_at)
-        }))
-      } : {
+      tableInfo: {
         exists: false,
         auctionCount: 0,
         recentAuctions: []
