@@ -353,10 +353,31 @@ export default async function handler(
         
       case 'EXPIRE_AUCTIONS':
         try {
+          // Add debug info about who/what triggered this check
+          console.log(`DEBUG: EXPIRE_AUCTIONS triggered by:`, {
+            requestBody: req.body,
+            headers: {
+              'user-agent': req.headers['user-agent'],
+              'x-forwarded-for': req.headers['x-forwarded-for']
+            },
+            timestamp: new Date().toISOString()
+          });
+
           // Check for expired auctions
           const auctionBefore = JSON.parse(JSON.stringify(auction));
           const { updatedAuction: expiredAuction, expiredCount } = expireAuctions(auction);
           
+          // Log the check results
+          console.log(`DEBUG: Expiration check results:`, {
+            auctionId,
+            expiredCount,
+            playersUp: auction.playersUp.map(p => ({
+              id: p.playerId,
+              endTime: p.endTime,
+              timeRemaining: p.endTime ? new Date(p.endTime).getTime() - Date.now() : null
+            }))
+          });
+
           // Only proceed if there were actual changes
           if (expiredCount > 0) {
             updatedAuction = expiredAuction;
@@ -382,7 +403,7 @@ export default async function handler(
             // Only save to database if there were changes
             await saveAuction(updatedAuction);
           } else {
-            // If nothing expired, return early without saving or sending updates
+            console.log(`DEBUG: No expirations found for auction ${auctionId}`);
             return res.status(200).json({
               success: true,
               message: 'No auctions expired'
