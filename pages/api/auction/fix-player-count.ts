@@ -13,13 +13,7 @@ export default async function handler(
   const { auctionId } = req.body;
 
   try {
-    // Get all players without LIMIT
-    const availablePlayers = await sql`
-      SELECT * FROM available_players 
-      WHERE auction_id = ${auctionId}
-      ORDER BY player_id`;
-    
-    // Get the current auction to ensure we update settings
+    // First get auction settings to get the configured player count
     const auctionResultQuery = await sql`
       SELECT settings FROM auctions 
       WHERE id = ${auctionId}`;
@@ -30,12 +24,20 @@ export default async function handler(
     }
 
     const settings = auctionResult.settings;
+    const configuredTotal = settings.totalPlayers;
+
+    // Get ALL players without LIMIT
+    const availablePlayers = await sql`
+      SELECT * FROM available_players 
+      WHERE auction_id = ${auctionId}`;
+
     const counts = {
       available: availablePlayers.rowCount,
-      total: availablePlayers.rowCount
+      total: configuredTotal || availablePlayers.rowCount, // Use configured total if available
+      expected: configuredTotal
     };
 
-    // Update the auction settings with the correct count
+    // Update the auction settings with diagnostic info
     await sql`
       UPDATE auctions 
       SET settings = jsonb_set(
@@ -44,8 +46,8 @@ export default async function handler(
         ${JSON.stringify({
           totalPlayers: counts.total,
           availablePlayers: counts.available,
-          expectedCount: counts.total,
-          matchesActual: true
+          expectedCount: counts.expected,
+          matchesActual: counts.available === counts.expected
         })}::jsonb
       )
       WHERE id = ${auctionId}`;
@@ -54,7 +56,8 @@ export default async function handler(
       success: true, 
       counts,
       message: 'Player counts verified',
-      players: availablePlayers.rows
+      players: availablePlayers.rows,
+      matchesExpected: counts.available === counts.expected
     });
   } catch (error) {
     console.error('Error fixing player count:', error);
