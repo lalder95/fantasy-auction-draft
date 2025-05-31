@@ -85,34 +85,43 @@ export async function saveAuction(auction: Auction): Promise<void> {
     }
     
     // 3. Save available players - IMPORTANT: Get ALL players, no pagination!
-    await sql`DELETE FROM available_players WHERE auction_id = ${auction.id}`;
-    
-    if (auction.availablePlayers && auction.availablePlayers.length > 0) {
-      // Log the count we're about to insert
-      console.log(`Inserting ${auction.availablePlayers.length} available players for auction ${auction.id}`);
+    await sql`BEGIN`;
+    try {
+      await sql`DELETE FROM available_players WHERE auction_id = ${auction.id}`;
       
-      for (const player of auction.availablePlayers) {
+      if (auction.availablePlayers && auction.availablePlayers.length > 0) {
+        // Log the count we're about to insert
+        console.log(`Inserting ${auction.availablePlayers.length} available players for auction ${auction.id}`);
+        
+        // Use batch insert instead of individual inserts
+        const values = auction.availablePlayers.map(player => ({
+          player_id: player.player_id,
+          auction_id: auction.id,
+          full_name: player.full_name,
+          position: player.position,
+          team: player.team || null,
+          status: player.status || 'Active',
+          years_exp: player.years_exp || 0
+        }));
+        
         await sql`
-          INSERT INTO available_players (
-            player_id, auction_id, full_name, position, team, status, years_exp
-          )
-          VALUES (
-            ${player.player_id},
-            ${auction.id},
-            ${player.full_name},
-            ${player.position},
-            ${player.team || null},
-            ${player.status || 'Active'},
-            ${player.years_exp || 0}
-          )
+          INSERT INTO available_players ${sql(values)}
         `;
+        
+        // Verify the count after insertion
+        const countResult = await sql`
+          SELECT COUNT(*) as count FROM available_players WHERE auction_id = ${auction.id}
+        `;
+        console.log(`Verified ${countResult[0].count} players saved for auction ${auction.id}`);
+        
+        if (countResult[0].count !== auction.availablePlayers.length) {
+          throw new Error(`Player count mismatch after save: expected ${auction.availablePlayers.length}, got ${countResult[0].count}`);
+        }
       }
-      
-      // Verify the count after insertion
-      const countResult = await sql`
-        SELECT COUNT(*) as count FROM available_players WHERE auction_id = ${auction.id}
-      `;
-      console.log(`Verified ${countResult[0].count} players saved for auction ${auction.id}`);
+      await sql`COMMIT`;
+    } catch (error) {
+      await sql`ROLLBACK`;
+      throw error;
     }
     
     // 4. Save players up for auction

@@ -47,27 +47,24 @@ export default function AuctionRoom({
     try {
       addDebugMessage(`Fetching full auction data for ID: ${auctionId}`);
       
-      // First, ensure player counts are accurate by calling the fix endpoint
-      if (role === 'commissioner') {
-        try {
-          addDebugMessage('Running player count verification...');
-          const fixResponse = await fetch('/api/auction/fix-player-count', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ auctionId })
-          });
-          
-          if (fixResponse.ok) {
-            const fixData = await fixResponse.json();
-            addDebugMessage(`Player count verification complete: ${fixData.duplicatesRemoved} duplicates removed`);
-          }
-        } catch (fixError) {
-          addDebugMessage(`Player count verification failed: ${fixError}`);
-          // Continue anyway - this is not critical
+      // Always verify player count on load to ensure consistency
+      try {
+        addDebugMessage('Running player count verification...');
+        const fixResponse = await fetch('/api/auction/fix-player-count', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auctionId })
+        });
+        
+        if (fixResponse.ok) {
+          const fixData = await fixResponse.json();
+          addDebugMessage(`Player count verification complete: ${fixData.counts.available} available players`);
         }
+      } catch (fixError) {
+        addDebugMessage(`Player count verification failed: ${fixError}`);
       }
-      
-      // Now fetch the auction data with accurate counts
+
+      // Now fetch the auction data after fixing counts
       const auctionResponse = await axios.get(`/api/auction/${auctionId}`, {
         params: { role, managerId, sessionId }
       });
@@ -77,43 +74,40 @@ export default function AuctionRoom({
         throw new Error('Failed to load auction data');
       }
       
-      // Fetch player stats separately to get the most current counts
-      const statsResponse = await axios.get(`/api/auction/player-stats`, {
-        params: { auctionId }
-      });
+      const auctionData = auctionResponse.data.auction;
       
-      if (statsResponse.data.success) {
-        // Update auction with the latest player counts
-        const updatedAuction = {
-          ...auctionResponse.data.auction,
-          settings: {
-            ...auctionResponse.data.auction.settings,
-            totalPlayers: statsResponse.data.totalPlayers,
-            availablePlayersCount: statsResponse.data.availablePlayers
+      // Only fetch player stats if we don't have player counts yet or if they seem incorrect
+      const needsPlayerStats = !auctionData.settings.totalPlayers || 
+                              !auctionData.settings.availablePlayersCount ||
+                              auctionData.settings.availablePlayersCount !== auctionData.availablePlayers?.length;
+      
+      if (needsPlayerStats) {
+        try {
+          const statsResponse = await axios.get(`/api/auction/player-stats`, {
+            params: { auctionId }
+          });
+          
+          if (statsResponse.data.success) {
+            // Update auction with the latest player counts
+            auctionData.settings = {
+              ...auctionData.settings,
+              totalPlayers: statsResponse.data.totalPlayers,
+              availablePlayersCount: statsResponse.data.availablePlayers
+            };
+            
+            addDebugMessage(`Auction data updated with verified counts - Total: ${statsResponse.data.totalPlayers}, Available: ${statsResponse.data.availablePlayers}`);
           }
-        };
-        
-        addDebugMessage(`Auction data updated with verified counts - Total: ${statsResponse.data.totalPlayers}, Available: ${statsResponse.data.availablePlayers}`);
-        setAuction(updatedAuction);
-        
-        // If manager role, find current manager
-        if (role === 'manager' && managerId && updatedAuction.managers) {
-          const manager = updatedAuction.managers.find(
-            (m: Manager) => m.id === managerId
-          );
-          setCurrentManager(manager || null);
+        } catch (statsError) {
+          addDebugMessage(`Failed to fetch player stats: ${statsError}`);
+          // Continue with auction data as-is
         }
-        
-        return;
       }
       
-      // Fallback: use auction data as-is if stats fetch fails
-      addDebugMessage('Using auction data without player stats verification');
-      setAuction(auctionResponse.data.auction);
+      setAuction(auctionData);
       
       // If manager role, find current manager
-      if (role === 'manager' && managerId && auctionResponse.data.auction.managers) {
-        const manager = auctionResponse.data.auction.managers.find(
+      if (role === 'manager' && managerId && auctionData.managers) {
+        const manager = auctionData.managers.find(
           (m: Manager) => m.id === managerId
         );
         setCurrentManager(manager || null);
@@ -123,7 +117,7 @@ export default function AuctionRoom({
       addDebugMessage(`Error fetching full auction: ${err instanceof Error ? err.message : String(err)}`);
       setError('Failed to load auction data. Please try again.');
     }
-  }, [auctionId, role, managerId, sessionId]);
+  }, [auctionId, role, managerId, sessionId, auction]);
   
   // Initialize Pusher and fetch auction data
   useEffect(() => {
