@@ -13,6 +13,13 @@ interface DbTestResponse {
       status: string;
       created_at: string;
     }>;
+    details?: {
+      availablePlayers: number;
+      completedPlayers: number;
+      playersUp: number;
+      managers: number;
+      settings: Record<string, any>;
+    };
   };
   error?: string;
   location?: string;
@@ -107,85 +114,59 @@ export default async function handler(
     const connectionTest = await sql`SELECT 1 as test`;
     console.log('Basic connection successful');
 
-    // Step 2: Check if auctions table exists
-    console.log('Checking auctions table...');
-    const tableCheck = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'auctions'
-      ) as exists
+    // Step 2: Get detailed info for most recent auction
+    console.log('Getting detailed auction information...');
+    const detailedAuctionInfo = await sql`
+      WITH recent_auction AS (
+        SELECT id FROM auctions ORDER BY created_at DESC LIMIT 1
+      )
+      SELECT 
+        a.id,
+        a.created_at,
+        a.status,
+        a.commissioner_id,
+        a.current_nomination_manager_index,
+        a.settings,
+        (SELECT COUNT(*) FROM available_players ap WHERE ap.auction_id = a.id) as available_player_count,
+        (SELECT COUNT(*) FROM completed_players cp WHERE cp.auction_id = a.id) as completed_player_count,
+        (SELECT COUNT(*) FROM players_up pu WHERE pu.auction_id = a.id) as players_up_count,
+        (SELECT COUNT(*) FROM managers m WHERE m.auction_id = a.id) as manager_count
+      FROM auctions a
+      WHERE a.id IN (SELECT id FROM recent_auction)
     `;
-    
-    const tableExists = tableCheck.rows[0]?.exists;
-    console.log('Auctions table exists:', tableExists);
 
-    // Step 3: If table exists, get auction info
-    if (tableExists) {
-      console.log('Getting auction information...');
-      const auctionsInfo = await sql`
-        SELECT 
-          id,
-          created_at,
-          status,
-          commissioner_id,
-          current_nomination_manager_index,
-          settings
-        FROM auctions 
-        ORDER BY created_at DESC 
-        LIMIT 5
-      ` as AuctionInfo;
-      
-      // Get total count
-      const countResult = await sql`
-        SELECT COUNT(*) as count FROM auctions
-      ` as CountResult;
-      
-      const totalCount = parseInt(countResult.rows[0]?.count) || 0;
-      console.log(`Found ${totalCount} total auctions`);
-
-      // Return successful response with data
-      return res.status(200).json({
-        status: 'ok',
-        connectionTest: { 
-          test: Number(connectionTest.rows[0]?.test) || 0 
-        },
-        tableInfo: {
-          exists: true,
-          auctionCount: totalCount,
-          recentAuctions: auctionsInfo.rows.map(row => ({
-            id: String(row.id),
-            status: String(row.status),
-            created_at: String(row.created_at)
-          }))
-        }
-      });
-    }
-
-    // Return successful response without auction data
-    return res.status(200).json({
-      status: 'ok',
-      connectionTest: { 
-        test: Number(connectionTest.rows[0]?.test) || 0 
-      },
+    // Format response
+    const auctionDetails = detailedAuctionInfo.rows[0];
+    const response = {
+      status: 'ok' as const,
+      connectionTest: { test: 1 },
       tableInfo: {
-        exists: false,
-        auctionCount: 0,
-        recentAuctions: []
+        exists: true,
+        auctionCount: 1,
+        recentAuctions: [{
+          id: auctionDetails.id,
+          status: auctionDetails.status,
+          created_at: auctionDetails.created_at
+        }],
+        details: {
+          availablePlayers: Number(auctionDetails.available_player_count),
+          completedPlayers: Number(auctionDetails.completed_player_count),
+          playersUp: Number(auctionDetails.players_up_count),
+          managers: Number(auctionDetails.manager_count),
+          settings: auctionDetails.settings
+        }
       }
-    });
+    };
+
+    console.log('Detailed auction info:', JSON.stringify(response, null, 2));
+    return res.status(200).json(response);
 
   } catch (error) {
     console.error('Database test failed:', error);
-    
-    const errorResponse: DbTestResponse = {
+    return res.status(500).json({
       status: 'error',
       error: error instanceof Error ? error.message : String(error),
-      location: error instanceof Error && error.message.includes('auctions') 
-        ? 'auctions query' 
-        : 'connection test'
-    };
-
-    return res.status(500).json(errorResponse);
+      location: 'detailed query'
+    });
   }
 }
