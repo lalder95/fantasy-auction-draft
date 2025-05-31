@@ -2,6 +2,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAuction, saveAuction } from '../../../lib/database-neon';
 import { getPusherServer } from '../../../lib/pusher-server';
+import { sql } from '@vercel/postgres'; // or from 'neon' if you use neon
 import {
   placeBid,
   passOnPlayer,
@@ -258,6 +259,7 @@ export default async function handler(
           return res.status(400).json({ message: 'Player ID is required for REMOVE_PLAYER action' });
         }
         try {
+          const commissionerId = auction.commissionerId;
           const playerDetails = auction.playersUp.find(p => p.playerId === playerId);
           updatedAuction = removePlayerFromAuction(auction, playerId, commissionerId);
           
@@ -352,17 +354,17 @@ export default async function handler(
       case 'EXPIRE_AUCTIONS':
         try {
           // Check for expired auctions
-          const auctionBefore = JSON.parse(JSON.stringify(auction)); // Deep clone for comparison
-          updatedAuction = expireAuctions(auction);
-          
-          // Find which players were completed
-          const newlyCompletedPlayerIds = updatedAuction.completedPlayers
-            .filter(p => !auctionBefore.completedPlayers.some((cp: {playerId: string}) => cp.playerId === p.playerId))
-            .map(p => p.playerId);
+          const auctionBefore = JSON.parse(JSON.stringify(auction));
+          const { updatedAuction: expiredAuction, expiredCount } = expireAuctions(auction);
+          updatedAuction = expiredAuction;
           
           // Only create update if something changed
-          if (newlyCompletedPlayerIds.length > 0) {
-            // Get details for completed players
+          if (expiredCount > 0) {
+            // Get newly completed players
+            const newlyCompletedPlayerIds = updatedAuction.completedPlayers
+              .filter(p => !auctionBefore.completedPlayers.some((cp: {playerId: string}) => cp.playerId === p.playerId))
+              .map(p => p.playerId);
+            
             const completedPlayerDetails = newlyCompletedPlayerIds.map(id => {
               const player = updatedAuction.completedPlayers.find(p => p.playerId === id);
               return player ? {
@@ -377,7 +379,6 @@ export default async function handler(
               completedPlayers: completedPlayerDetails
             };
           } else {
-            // No players were completed
             updateInfo = {
               updateType: 'EXPIRE_AUCTIONS',
               completedPlayers: []
