@@ -471,6 +471,44 @@ export default function AuctionRoom({
     window.location.reload();
   };
   
+  const verifyPlayerCount = useCallback(async () => {
+    try {
+      addDebugMessage('Running player count verification...');
+      const fixResponse = await fetch('/api/auction/fix-player-count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          auctionId
+        })
+      });
+      
+      if (fixResponse.ok) {
+        const fixData = await fixResponse.json();
+        addDebugMessage(`Player count verification complete: ${fixData.counts.available} available players`);
+        
+        // Update auction data with verified counts and player list
+        setAuction(current => {
+          if (!current) return current;
+          return {
+            ...current,
+            availablePlayers: fixData.players,
+            settings: {
+              ...current.settings,
+              playerCountDiagnostic: {
+                totalPlayers: fixData.counts.total,
+                availablePlayers: fixData.counts.available,
+                expectedCount: fixData.counts.total,
+                matchesActual: true
+              }
+            }
+          };
+        });
+      }
+    } catch (error) {
+      addDebugMessage(`Player count verification failed: ${error}`);
+    }
+  }, [auctionId, addDebugMessage]);
+  
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
