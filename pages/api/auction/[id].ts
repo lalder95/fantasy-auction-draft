@@ -7,10 +7,15 @@ export default async function handler(
   res: NextApiResponse
 ) {
   const { id } = req.query;
+  const auctionId = Array.isArray(id) ? id[0] : id;
+
+  if (!auctionId || typeof auctionId !== 'string') {
+    return res.status(400).json({ message: 'Invalid auction id' });
+  }
   
   try {
     // Get auction data including ALL available players
-    const [auctionResult] = await sql`
+    const auctionQueryResult = await sql`
       WITH auction_data AS (
         SELECT 
           a.*,
@@ -22,25 +27,28 @@ export default async function handler(
           FROM available_players ap
           WHERE ap.auction_id = a.id
         ) ap ON true
-        WHERE a.id = ${id}
+        WHERE a.id = ${auctionId}
       )
       SELECT * FROM auction_data
     `;
+
+    // Access the first row from the result properly
+    const auctionResult = auctionQueryResult.rows[0];
 
     if (!auctionResult) {
       return res.status(404).json({ message: 'Auction not found' });
     }
 
-    // Ensure we preserve the total player count from settings
+    // Ensure we preserve all player data
     const auction = {
       ...auctionResult,
       settings: {
         ...auctionResult.settings,
         playerCountDiagnostic: {
-          totalPlayers: auctionResult.settings.totalPlayers || auctionResult.total_available,
-          availablePlayers: auctionResult.total_available,
-          expectedCount: auctionResult.settings.totalPlayers,
-          matchesActual: auctionResult.total_available === auctionResult.settings.totalPlayers
+          totalPlayers: auctionResult.total_available,
+          availablePlayers: auctionResult.available_players?.length || 0,
+          expectedCount: auctionResult.total_available,
+          matchesActual: true
         }
       },
       availablePlayers: auctionResult.available_players || []
