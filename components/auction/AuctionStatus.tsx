@@ -24,10 +24,15 @@ const getStatusColor = (status: string) => {
 };
 
 const AuctionStatus = ({ auction, currentManager, role }: AuctionStatusProps) => {
-  // Use either available players length or configured total players
-  const totalPlayers = auction.availablePlayers?.length || 
-                      (auction.settings as any).totalPlayers || 
+  // Get total players from the diagnostic data instead of calculating
+  const totalPlayers = auction.settings?.playerCountDiagnostic?.totalPlayers || 
+                      auction.availablePlayers?.length || 
                       0;
+
+  // If diagnostic data is available but doesn't match the UI count, show a warning
+  const hasPlayerCountMismatch = 
+    auction.settings?.playerCountDiagnostic?.totalPlayers && 
+    auction.settings.playerCountDiagnostic.totalPlayers !== auction.availablePlayers?.length;
 
   const getStatusTag = () => {
     switch (auction.status) {
@@ -95,6 +100,11 @@ const AuctionStatus = ({ auction, currentManager, role }: AuctionStatusProps) =>
           <span className="text-sm text-gray-500">Players Auctioned:</span>
           <span className="ml-2">
             {auction.completedPlayers.length} of {totalPlayers}
+            {hasPlayerCountMismatch && (
+              <span className="ml-2 text-xs text-orange-500">
+                (Player count mismatch detected)
+              </span>
+            )}
           </span>
         </div>
       </div>

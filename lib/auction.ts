@@ -28,6 +28,13 @@ export interface PlayerUp {
   nominationIndex: number; // Which player slot this is (for multiple nominations)
 }
 
+interface PlayerCountDiagnostic {
+  totalPlayers: number;
+  availablePlayers: number;
+  expectedCount: number;
+  matchesActual: boolean;
+}
+
 export interface AuctionSettings {
   leagueId: string;
   leagueName: string;
@@ -43,6 +50,7 @@ export interface AuctionSettings {
   completionType: 'nominationRounds' | 'playersWon';
   targetPlayersWon: number;
   totalPlayers: number;
+  playerCountDiagnostic?: PlayerCountDiagnostic;
 }
 
 export interface Auction {
