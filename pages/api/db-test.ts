@@ -18,12 +18,75 @@ interface DbTestResponse {
   location?: string;
 }
 
+// Database table interfaces
+interface AuctionRow {
+  id: string;
+  created_at: Date;
+  status: 'setup' | string;
+  commissioner_id: string;
+  current_nomination_manager_index: number;
+  settings: Record<string, any>;
+}
+
+interface AvailablePlayer {
+  player_id: string;
+  auction_id: string;
+  full_name: string;
+  position: string;
+  team: string | null;
+  years_exp: number;
+  status: string;
+}
+
+interface CompletedPlayer {
+  player_id: string;
+  auction_id: string;
+  name: string;
+  position: string;
+  team: string | null;
+  nominated_by: string;
+  final_bid: number;
+  winner: string;
+  start_time: Date;
+  end_time: Date;
+  status: 'completed';
+  nomination_index: number;
+}
+
+interface Manager {
+  id: string;
+  auction_id: string;
+  name: string;
+  roster_id: number;
+  budget: number;
+  initial_budget: number;
+  nomination_order: number;
+  avatar: string | null;
+}
+
+interface PlayerUp {
+  player_id: string;
+  auction_id: string;
+  name: string;
+  position: string;
+  team: string | null;
+  nominated_by: string;
+  current_bid: number;
+  current_bidder: string | null;
+  start_time: Date;
+  end_time: Date;
+  status: 'active' | string;
+  nomination_index: number;
+}
+
 interface AuctionInfo {
   rows: Array<{
     id: string;
-    status: string;
     created_at: string;
-    updated_at: string;
+    status: string;
+    commissioner_id: string;
+    current_nomination_manager_index: number;
+    settings: Record<string, any>;
   }>;
 }
 
@@ -33,6 +96,7 @@ interface CountResult {
   }>;
 }
 
+// Update the query to only select fields we need
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<DbTestResponse>
@@ -61,10 +125,12 @@ export default async function handler(
       console.log('Getting auction information...');
       const auctionsInfo = await sql`
         SELECT 
-          id, 
-          status, 
+          id,
           created_at,
-          updated_at
+          status,
+          commissioner_id,
+          current_nomination_manager_index,
+          settings
         FROM auctions 
         ORDER BY created_at DESC 
         LIMIT 5
