@@ -131,10 +131,15 @@ export default async function handler(
           return res.status(400).json({ message: 'Player ID and manager ID are required for NOMINATE action' });
         }
         try {
-          // This will cause player pool changes
           updatedAuction = nominatePlayer(auction, managerId, playerId, bidAmount || 1);
           
-          // For nomination, include player ID info for player pool management
+          // Remove from available players in DB
+          await sql`
+            DELETE FROM available_players 
+            WHERE auction_id = ${auctionId} 
+            AND player_id = ${playerId}
+          `;
+          
           updateInfo = {
             updateType: 'NOMINATE',
             nominatedPlayerId: playerId,
@@ -253,20 +258,31 @@ export default async function handler(
           return res.status(400).json({ message: 'Player ID is required for REMOVE_PLAYER action' });
         }
         try {
-          const commissionerId = auction.commissionerId;
-          
-          // First find the player details before removing
           const playerDetails = auction.playersUp.find(p => p.playerId === playerId);
-          
           updatedAuction = removePlayerFromAuction(auction, playerId, commissionerId);
           
-          // Include player details in the update for client-side management
+          // Re-add to available players in DB if needed
+          if (playerDetails) {
+            await sql`
+              INSERT INTO available_players (
+                player_id, auction_id, full_name, position, team, status, years_exp
+              ) VALUES (
+                ${playerDetails.playerId},
+                ${auctionId},
+                ${playerDetails.name},
+                ${playerDetails.position},
+                ${playerDetails.team},
+                'Active',
+                0
+              )
+              ON CONFLICT DO NOTHING
+            `;
+          }
+          
           updateInfo = {
             updateType: 'REMOVE_PLAYER',
             removedPlayerId: playerId,
-            playerDetails: playerDetails || null,
-            // Include the player back in available players if found
-            returnToAvailable: true
+            playerDetails
           };
         } catch (error) {
           return res.status(400).json({ 

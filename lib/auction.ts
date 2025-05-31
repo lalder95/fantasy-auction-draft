@@ -439,19 +439,29 @@ export function completePlayerAuction(
 /**
  * Expire auctions that have reached their end time
  */
-export function expireAuctions(auction: Auction): Auction {
+export function expireAuctions(auction: Auction): { updatedAuction: Auction; expiredCount: number } {
   const now = Date.now();
-  let updatedAuction = { ...auction };
-  
-  // Check each player up for auction
-  auction.playersUp.forEach(playerUp => {
-    if (playerUp.status === 'active' && now > playerUp.endTime) {
-      // Complete this auction
-      updatedAuction = completePlayerAuction(updatedAuction, playerUp.playerId);
-    }
-  });
-  
-  return updatedAuction;
+  let expiredCount = 0;
+
+  // Only clone if we need to make changes
+  let updatedAuction = auction;
+
+  const expiredPlayers = auction.playersUp.filter(player => 
+    player.endTime <= now && player.status === 'active'
+  );
+
+  if (expiredPlayers.length > 0) {
+    // Clone auction only if we have changes
+    updatedAuction = { ...auction };
+    
+    expiredPlayers.forEach(player => {
+      // Move player to completed
+      updatedAuction = completePlayerAuction(updatedAuction, player.playerId);
+      expiredCount++;
+    });
+  }
+
+  return { updatedAuction, expiredCount };
 }
 
 /**
