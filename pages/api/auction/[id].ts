@@ -9,10 +9,11 @@ const debugLog = (step: string, data: any) => {
       JSON.stringify(data, (key, value) => {
         if (value instanceof Error) {
           return {
-            message: value.message,
+            ...value, // Spread first to allow overriding with specific properties
+            type: 'Error',
             name: value.name,
-            stack: value.stack,
-            ...value
+            message: value.message,
+            stack: value.stack
           };
         }
         return value;
@@ -20,7 +21,9 @@ const debugLog = (step: string, data: any) => {
     );
   } catch (error) {
     console.log(`[DEBUG][${new Date().toISOString()}][ERROR LOGGING]`, 
-      'Failed to stringify debug data:', error);
+      'Failed to stringify debug data:', 
+      error instanceof Error ? error.message : String(error)
+    );
   }
 };
 
@@ -77,7 +80,7 @@ export default async function handler(
       setTimeout(() => reject(new Error('Query timeout')), 5000)
     );
     
-    const queryPromise = sql`
+    const queryPromise: Promise<{ rows: any[] }> = sql`
       SELECT 
         id, 
         status, 
@@ -88,19 +91,36 @@ export default async function handler(
       WHERE id = ${auctionId}
     `;
 
-    debugLog('Query Starting', { auctionId, sql: queryPromise.text });
+    debugLog('Query Starting', { auctionId, sql: `
+      SELECT 
+        id, 
+        status, 
+        nomination_index,
+        settings::text as settings_raw,
+        COALESCE(settings::jsonb, '{}'::jsonb) as settings
+      FROM auctions 
+      WHERE id = ${auctionId}
+    ` });
     
-    const basicAuctionQuery = await Promise.race([queryPromise, queryTimeout])
+    const basicAuctionQueryResult = await Promise.race([queryPromise, queryTimeout])
       .catch(error => {
         debugLog('Query Failed', { error, auctionId });
         throw error;
       });
 
     // Step 5: Process query results
-    if (!basicAuctionQuery?.rows?.length) {
+    if (
+      !basicAuctionQueryResult ||
+      typeof basicAuctionQueryResult !== 'object' ||
+      !('rows' in basicAuctionQueryResult) ||
+      !Array.isArray((basicAuctionQueryResult as any).rows) ||
+      !(basicAuctionQueryResult as any).rows.length
+    ) {
       debugLog('No Results', { auctionId });
       return res.status(404).json({ message: 'Auction not found' });
     }
+
+    const basicAuctionQuery = basicAuctionQueryResult as { rows: any[] };
 
     const auctionResult = basicAuctionQuery.rows[0];
     debugLog('Raw Result', {
