@@ -26,7 +26,7 @@ const getStatusColor = (status: string) => {
 const AuctionStatus = ({ auction, currentManager, role }: AuctionStatusProps) => {
   // Use either available players length or configured total players
   const totalPlayers = auction.availablePlayers?.length || 
-                      auction.settings.totalPlayers || 
+                      (auction.settings as any).totalPlayers || 
                       0;
 
   const getStatusTag = () => {

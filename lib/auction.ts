@@ -42,6 +42,7 @@ export interface AuctionSettings {
   defaultBudget: number;
   completionType: 'nominationRounds' | 'playersWon';
   targetPlayersWon: number;
+  totalPlayers: number;
 }
 
 export interface Auction {
@@ -82,6 +83,7 @@ export function createAuction(
       defaultBudget: 200,
       completionType: 'nominationRounds', // Default to nomination rounds
       targetPlayersWon: 5, // Default to 5 players per team
+      totalPlayers: 0,
     },
     managers: [],
     availablePlayers: [],
