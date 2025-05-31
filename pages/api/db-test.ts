@@ -114,11 +114,13 @@ export default async function handler(
     const connectionTest = await sql`SELECT 1 as test`;
     console.log('Basic connection successful');
 
-    // Step 2: Get detailed info for most recent auction
+    // Step 2: Get detailed info for recent auctions
     console.log('Getting detailed auction information...');
     const detailedAuctionInfo = await sql`
-      WITH recent_auction AS (
-        SELECT id FROM auctions ORDER BY created_at DESC LIMIT 1
+      WITH recent_auctions AS (
+        SELECT id FROM auctions 
+        ORDER BY created_at DESC 
+        LIMIT 5
       )
       SELECT 
         a.id,
@@ -130,35 +132,37 @@ export default async function handler(
         (SELECT COUNT(*) FROM available_players ap WHERE ap.auction_id = a.id) as available_player_count,
         (SELECT COUNT(*) FROM completed_players cp WHERE cp.auction_id = a.id) as completed_player_count,
         (SELECT COUNT(*) FROM players_up pu WHERE pu.auction_id = a.id) as players_up_count,
-        (SELECT COUNT(*) FROM managers m WHERE m.auction_id = a.id) as manager_count
+        (SELECT COUNT(*) FROM managers m WHERE m.auction_id = a.id) as manager_count,
+        (SELECT json_agg(m.*) FROM managers m WHERE m.auction_id = a.id) as managers_info
       FROM auctions a
-      WHERE a.id IN (SELECT id FROM recent_auction)
+      WHERE a.id IN (SELECT id FROM recent_auctions)
+      ORDER BY a.created_at DESC
     `;
 
-    // Format response
-    const auctionDetails = detailedAuctionInfo.rows[0];
+    // Format response with details for each auction
     const response = {
       status: 'ok' as const,
       connectionTest: { test: 1 },
       tableInfo: {
         exists: true,
-        auctionCount: 1,
-        recentAuctions: [{
-          id: auctionDetails.id,
-          status: auctionDetails.status,
-          created_at: auctionDetails.created_at
-        }],
-        details: {
-          availablePlayers: Number(auctionDetails.available_player_count),
-          completedPlayers: Number(auctionDetails.completed_player_count),
-          playersUp: Number(auctionDetails.players_up_count),
-          managers: Number(auctionDetails.manager_count),
-          settings: auctionDetails.settings
-        }
+        auctionCount: detailedAuctionInfo.rows.length,
+        recentAuctions: detailedAuctionInfo.rows.map(auction => ({
+          id: auction.id,
+          status: auction.status,
+          created_at: auction.created_at,
+          details: {
+            availablePlayers: Number(auction.available_player_count),
+            completedPlayers: Number(auction.completed_player_count),
+            playersUp: Number(auction.players_up_count),
+            managers: Number(auction.manager_count),
+            settings: auction.settings || {},
+            managersInfo: auction.managers_info || []
+          }
+        }))
       }
     };
 
-    console.log('Detailed auction info:', JSON.stringify(response, null, 2));
+    console.log('Found auctions:', response.tableInfo.auctionCount);
     return res.status(200).json(response);
 
   } catch (error) {
