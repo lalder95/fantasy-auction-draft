@@ -14,12 +14,11 @@ export default async function handler(
   }
   
   try {
-    // First get the auction settings to ensure we have the correct total
     const settingsQuery = await sql`
       SELECT settings FROM auctions WHERE id = ${auctionId}
     `;
     
-    const settings = settingsQuery.rows[0]?.settings;
+    const settings = settingsQuery.rows[0]?.settings || {};
     console.log('Auction settings:', settings);
 
     // Then get full auction data with players
@@ -27,14 +26,25 @@ export default async function handler(
       WITH auction_data AS (
         SELECT 
           a.*,
-          (
-            SELECT json_build_object(
-              'players', COALESCE(json_agg(ap.*), '[]'::json),
-              'count', COUNT(*)
-            )
-            FROM available_players ap 
-            WHERE ap.auction_id = a.id
-          ) as player_data
+          COALESCE(
+            (
+              SELECT json_build_object(
+                'players', COALESCE(json_agg(ap.*), '[]'::json),
+                'count', COUNT(*)
+              )
+              FROM available_players ap 
+              WHERE ap.auction_id = a.id
+            ),
+            '{"players": [], "count": 0}'::json
+          ) as player_data,
+          COALESCE(
+            (SELECT json_agg(cp.*) FROM completed_players cp WHERE cp.auction_id = a.id),
+            '[]'::json
+          ) as completed_players,
+          COALESCE(
+            (SELECT json_agg(pu.*) FROM players_up pu WHERE pu.auction_id = a.id),
+            '[]'::json
+          ) as players_up
         FROM auctions a
         WHERE a.id = ${auctionId}
       )
@@ -48,43 +58,41 @@ export default async function handler(
       return res.status(404).json({ message: 'Auction not found' });
     }
 
-    // Extract player data safely
+    // Extract and validate all arrays
     const playerData = auctionResult.player_data || { players: [], count: 0 };
     const availablePlayers = Array.isArray(playerData.players) ? playerData.players : [];
+    const completedPlayers = Array.isArray(auctionResult.completed_players) ? auctionResult.completed_players : [];
+    const playersUp = Array.isArray(auctionResult.players_up) ? auctionResult.players_up : [];
     const totalAvailable = parseInt(playerData.count) || 0;
 
-    console.log('Player data:', {
-      total: totalAvailable,
-      available: availablePlayers.length,
-      isArray: Array.isArray(availablePlayers)
-    });
-
-    // Build the auction object with guaranteed arrays and counts
+    // Build the auction object with guaranteed arrays
     const auction = {
       ...auctionResult,
       availablePlayers,
+      completedPlayers,
+      playersUp,
       settings: {
         ...settings,
+        totalPlayers: settings.totalPlayers || totalAvailable,
         playerCountDiagnostic: {
           totalPlayers: totalAvailable,
           availablePlayers: availablePlayers.length,
-          expectedCount: totalAvailable,
+          expectedCount: settings.totalPlayers || totalAvailable,
           matchesActual: true
         }
-      },
-      completedPlayers: auctionResult.completed_players || [],
-      playersUp: auctionResult.players_up || []
+      }
     };
 
-    // Verify the response structure
-    console.log('Response structure:', {
-      hasSettings: !!auction.settings,
-      hasAvailablePlayers: Array.isArray(auction.availablePlayers),
-      hasCompletedPlayers: Array.isArray(auction.completedPlayers),
-      hasPlayersUp: Array.isArray(auction.playersUp)
+    // Debug logging
+    console.log('Arrays in response:', {
+      availablePlayers: availablePlayers.length,
+      completedPlayers: completedPlayers.length,
+      playersUp: playersUp.length,
+      totalPlayers: auction.settings.totalPlayers
     });
 
     return res.status(200).json({ auction });
+
   } catch (error) {
     console.error('Error fetching auction:', error);
     return res.status(500).json({ 
