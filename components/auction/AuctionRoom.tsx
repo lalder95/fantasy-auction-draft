@@ -117,237 +117,253 @@ export default function AuctionRoom({
       addDebugMessage(`Error fetching full auction: ${err instanceof Error ? err.message : String(err)}`);
       setError('Failed to load auction data. Please try again.');
     }
-  }, [auctionId, role, managerId, sessionId, auction]);
+  }, [auctionId, role, managerId, sessionId]); // Remove auction from dependencies
   
   // Initialize Pusher and fetch auction data
   useEffect(() => {
+    let mounted = true;
     let checker: any = null;
+    let pusherInstance: any = null;
+    let channelInstance: any = null;
 
-    // Import expiration checker dynamically to avoid server-side rendering issues
-    import('../../lib/expiration-checker').then(({ ExpirationChecker }) => {
-      // Initial fetch of auction data
-      fetchFullAuction().then(() => {
-        setLoading(false);
-      });
+    const initialize = async () => {
+      if (!mounted) return;
+
+      // Initialize Pusher
+      const pusher = getPusherClient();
+      pusherInstance = pusher;
+      addDebugMessage('Initializing Pusher connection');
       
-      // Start expiration checker if commissioner
+      // Create channel
+      const channelName = `auction-${auctionId}`;
+      const channel = pusher.subscribe(channelName);
+      channelInstance = channel;
+      addDebugMessage(`Subscribing to Pusher channel: ${channelName}`);
+
+      // Initial data fetch
+      await fetchFullAuction();
+      setLoading(false);
+
+      // Only initialize expiration checker for commissioner
       if (role === 'commissioner') {
+        const { ExpirationChecker } = await import('../../lib/expiration-checker');
         addDebugMessage('Starting expiration checker (commissioner only)');
         checker = new ExpirationChecker(
           auctionId, 
           process.env.NEXT_PUBLIC_AUCTION_WORKER_SECRET || 'dev-secret'
         );
-        checker.start(1000); // Check every second
-        setExpirationChecker(checker);
-      }
-    });
-    
-    // Subscribe to Pusher channel for real-time updates
-    const pusher = getPusherClient();
-    addDebugMessage('Initializing Pusher connection');
-    
-    // Create a channel specific to this auction
-    const channelName = `auction-${auctionId}`;
-    addDebugMessage(`Subscribing to Pusher channel: ${channelName}`);
-    const channel = pusher.subscribe(channelName);
-    
-    // Handle connection success
-    pusher.connection.bind('connected', () => {
-      addDebugMessage('Pusher connected successfully');
-      setConnectionStatus('connected');
-    });
-    
-    // Handle connection errors
-    pusher.connection.bind('error', (err: any) => {
-      addDebugMessage(`Pusher connection error: ${err.message}`);
-      setConnectionStatus('disconnected');
-      setError(`Connection error: ${err.message}`);
-    });
-    
-    // Handle auction updates - modified to support optimized updates
-    channel.bind('auction-update', (data: { auction?: Auction, updateInfo?: any, fullUpdateNeeded?: boolean }) => {
-      addDebugMessage('Received auction update from Pusher');
-      
-      if (data.auction) {
-        // Full auction update (legacy format)
-        addDebugMessage('Received full auction data');
-        setAuction(data.auction);
-        
-        // Update current manager if needed
-        if (role === 'manager' && managerId && data.auction.managers) {
-          const manager = data.auction.managers.find(m => m.id === managerId);
-          setCurrentManager(manager || null);
+        if (mounted) {
+          checker.start(1000);
+          setExpirationChecker(checker);
         }
-      } else if (data.updateInfo) {
-        // Partial update with optimized payload
-        addDebugMessage(`Received partial update: ${data.updateInfo.updateType}`);
+      }
+
+      // Bind Pusher events
+      // Handle connection success
+      pusher.connection.bind('connected', () => {
+        addDebugMessage('Pusher connected successfully');
+        setConnectionStatus('connected');
+      });
+      
+      // Handle connection errors
+      pusher.connection.bind('error', (err: any) => {
+        addDebugMessage(`Pusher connection error: ${err.message}`);
+        setConnectionStatus('disconnected');
+        setError(`Connection error: ${err.message}`);
+      });
+      
+      // Handle auction updates - modified to support optimized updates
+      channel.bind('auction-update', (data: { auction?: Auction, updateInfo?: any, fullUpdateNeeded?: boolean }) => {
+        addDebugMessage('Received auction update from Pusher');
         
-        if (data.fullUpdateNeeded) {
-          // Fetch full auction data if needed
-          addDebugMessage('Full update required, fetching complete auction data');
-          fetchFullAuction();
-        } else {
-          // Apply partial update to existing auction state
-          setAuction(prevAuction => {
-            if (!prevAuction) return null;
-            
-            // Create a new auction object with the updated properties
-            const updatedAuction = { ...prevAuction };
-            
-            // Update auction status if provided
-            if (data.updateInfo.status) {
-              updatedAuction.status = data.updateInfo.status;
-            }
-            
-            // Update nomination manager index if provided
-            if (data.updateInfo.currentNominationManagerIndex !== undefined) {
-              updatedAuction.currentNominationManagerIndex = data.updateInfo.currentNominationManagerIndex;
-            }
-            
-            // Update specific player if provided
-            if (data.updateInfo.affectedPlayer) {
-              const { playerId } = data.updateInfo.affectedPlayer;
-              const playerIndex = updatedAuction.playersUp.findIndex(p => p.playerId === playerId);
+        if (data.auction) {
+          // Full auction update (legacy format)
+          addDebugMessage('Received full auction data');
+          setAuction(data.auction);
+          
+          // Update current manager if needed
+          if (role === 'manager' && managerId && data.auction.managers) {
+            const manager = data.auction.managers.find(m => m.id === managerId);
+            setCurrentManager(manager || null);
+          }
+        } else if (data.updateInfo) {
+          // Partial update with optimized payload
+          addDebugMessage(`Received partial update: ${data.updateInfo.updateType}`);
+          
+          if (data.fullUpdateNeeded) {
+            // Fetch full auction data if needed
+            addDebugMessage('Full update required, fetching complete auction data');
+            fetchFullAuction();
+          } else {
+            // Apply partial update to existing auction state
+            setAuction(prevAuction => {
+              if (!prevAuction) return null;
               
-              if (playerIndex >= 0) {
-                updatedAuction.playersUp = [
-                  ...updatedAuction.playersUp.slice(0, playerIndex),
-                  { 
-                    ...updatedAuction.playersUp[playerIndex],
-                    ...data.updateInfo.affectedPlayer
-                  },
-                  ...updatedAuction.playersUp.slice(playerIndex + 1)
-                ];
+              // Create a new auction object with the updated properties
+              const updatedAuction = { ...prevAuction };
+              
+              // Update auction status if provided
+              if (data.updateInfo.status) {
+                updatedAuction.status = data.updateInfo.status;
               }
-            }
-            
-            // Update specific manager if provided
-            if (data.updateInfo.affectedManager) {
-              const { id } = data.updateInfo.affectedManager;
-              const managerIndex = updatedAuction.managers.findIndex(m => m.id === id);
               
-              if (managerIndex >= 0) {
-                updatedAuction.managers = [
-                  ...updatedAuction.managers.slice(0, managerIndex),
-                  { 
-                    ...updatedAuction.managers[managerIndex],
-                    ...data.updateInfo.affectedManager
-                  },
-                  ...updatedAuction.managers.slice(managerIndex + 1)
-                ];
+              // Update nomination manager index if provided
+              if (data.updateInfo.currentNominationManagerIndex !== undefined) {
+                updatedAuction.currentNominationManagerIndex = data.updateInfo.currentNominationManagerIndex;
+              }
+              
+              // Update specific player if provided
+              if (data.updateInfo.affectedPlayer) {
+                const { playerId } = data.updateInfo.affectedPlayer;
+                const playerIndex = updatedAuction.playersUp.findIndex(p => p.playerId === playerId);
                 
-                // Update current manager if needed
-                if (role === 'manager' && managerId === id) {
-                  setCurrentManager(updatedAuction.managers[managerIndex]);
+                if (playerIndex >= 0) {
+                  updatedAuction.playersUp = [
+                    ...updatedAuction.playersUp.slice(0, playerIndex),
+                    { 
+                      ...updatedAuction.playersUp[playerIndex],
+                      ...data.updateInfo.affectedPlayer
+                    },
+                    ...updatedAuction.playersUp.slice(playerIndex + 1)
+                  ];
                 }
               }
-            }
-            
-            // Handle player removals
-            if (data.updateInfo.updateType === 'REMOVE_PLAYER' && data.updateInfo.removedPlayerId) {
-              updatedAuction.playersUp = updatedAuction.playersUp.filter(
-                p => p.playerId !== data.updateInfo.removedPlayerId
-              );
               
-              // If we have player details and it should return to available, add it back
-              if (data.updateInfo.returnToAvailable && data.updateInfo.playerDetails) {
-                // This would require fetching the full player data, so trigger a full refresh
-                fetchFullAuction();
-              }
-            }
-            
-            // Handle nominations
-            if (data.updateInfo.updateType === 'NOMINATE' && data.updateInfo.newPlayerUp) {
-              updatedAuction.playersUp.push(data.updateInfo.newPlayerUp);
-              
-              // Remove from available players if we have the ID
-              if (data.updateInfo.nominatedPlayerId) {
-                updatedAuction.availablePlayers = updatedAuction.availablePlayers.filter(
-                  p => p.player_id !== data.updateInfo.nominatedPlayerId
-                );
-              }
-            }
-            
-            // Handle completed players
-            if (data.updateInfo.completedPlayers && data.updateInfo.completedPlayers.length > 0) {
-              data.updateInfo.completedPlayers.forEach((completed: any) => {
-                // Remove from playersUp
-                const playerUpIndex = updatedAuction.playersUp.findIndex(
-                  p => p.playerId === completed.playerId
-                );
+              // Update specific manager if provided
+              if (data.updateInfo.affectedManager) {
+                const { id } = data.updateInfo.affectedManager;
+                const managerIndex = updatedAuction.managers.findIndex(m => m.id === id);
                 
-                if (playerUpIndex >= 0) {
-                  const playerUp = updatedAuction.playersUp[playerUpIndex];
-                  
-                  // Add to completed
-                  updatedAuction.completedPlayers.push({
-                    ...playerUp,
-                    finalBid: completed.finalBid,
-                    winner: completed.winningManagerId || completed.winner,
-                    status: 'completed'
-                  } as any);
-                  
-                  // Remove from playersUp
-                  updatedAuction.playersUp = [
-                    ...updatedAuction.playersUp.slice(0, playerUpIndex),
-                    ...updatedAuction.playersUp.slice(playerUpIndex + 1)
+                if (managerIndex >= 0) {
+                  updatedAuction.managers = [
+                    ...updatedAuction.managers.slice(0, managerIndex),
+                    { 
+                      ...updatedAuction.managers[managerIndex],
+                      ...data.updateInfo.affectedManager
+                    },
+                    ...updatedAuction.managers.slice(managerIndex + 1)
                   ];
                   
-                  // Update winning manager's budget and won players
-                  const winningManagerIndex = updatedAuction.managers.findIndex(
-                    m => m.id === (completed.winningManagerId || completed.winner)
-                  );
-                  
-                  if (winningManagerIndex >= 0) {
-                    const winningManager = updatedAuction.managers[winningManagerIndex];
-                    updatedAuction.managers = [
-                      ...updatedAuction.managers.slice(0, winningManagerIndex),
-                      {
-                        ...winningManager,
-                        budget: winningManager.budget - completed.finalBid,
-                        wonPlayers: [...winningManager.wonPlayers, completed.playerId]
-                      },
-                      ...updatedAuction.managers.slice(winningManagerIndex + 1)
-                    ];
-                    
-                    // Update current manager if it's the winning manager
-                    if (role === 'manager' && managerId === winningManager.id) {
-                      setCurrentManager(updatedAuction.managers[winningManagerIndex]);
-                    }
+                  // Update current manager if needed
+                  if (role === 'manager' && managerId === id) {
+                    setCurrentManager(updatedAuction.managers[managerIndex]);
                   }
                 }
-              });
-            }
-            
-            return updatedAuction;
-          });
+              }
+              
+              // Handle player removals
+              if (data.updateInfo.updateType === 'REMOVE_PLAYER' && data.updateInfo.removedPlayerId) {
+                updatedAuction.playersUp = updatedAuction.playersUp.filter(
+                  p => p.playerId !== data.updateInfo.removedPlayerId
+                );
+                
+                // If we have player details and it should return to available, add it back
+                if (data.updateInfo.returnToAvailable && data.updateInfo.playerDetails) {
+                  // This would require fetching the full player data, so trigger a full refresh
+                  fetchFullAuction();
+                }
+              }
+              
+              // Handle nominations
+              if (data.updateInfo.updateType === 'NOMINATE' && data.updateInfo.newPlayerUp) {
+                updatedAuction.playersUp.push(data.updateInfo.newPlayerUp);
+                
+                // Remove from available players if we have the ID
+                if (data.updateInfo.nominatedPlayerId) {
+                  updatedAuction.availablePlayers = updatedAuction.availablePlayers.filter(
+                    p => p.player_id !== data.updateInfo.nominatedPlayerId
+                  );
+                }
+              }
+              
+              // Handle completed players
+              if (data.updateInfo.completedPlayers && data.updateInfo.completedPlayers.length > 0) {
+                data.updateInfo.completedPlayers.forEach((completed: any) => {
+                  // Remove from playersUp
+                  const playerUpIndex = updatedAuction.playersUp.findIndex(
+                    p => p.playerId === completed.playerId
+                  );
+                  
+                  if (playerUpIndex >= 0) {
+                    const playerUp = updatedAuction.playersUp[playerUpIndex];
+                    
+                    // Add to completed
+                    updatedAuction.completedPlayers.push({
+                      ...playerUp,
+                      finalBid: completed.finalBid,
+                      winner: completed.winningManagerId || completed.winner,
+                      status: 'completed'
+                    } as any);
+                    
+                    // Remove from playersUp
+                    updatedAuction.playersUp = [
+                      ...updatedAuction.playersUp.slice(0, playerUpIndex),
+                      ...updatedAuction.playersUp.slice(playerUpIndex + 1)
+                    ];
+                    
+                    // Update winning manager's budget and won players
+                    const winningManagerIndex = updatedAuction.managers.findIndex(
+                      m => m.id === (completed.winningManagerId || completed.winner)
+                    );
+                    
+                    if (winningManagerIndex >= 0) {
+                      const winningManager = updatedAuction.managers[winningManagerIndex];
+                      updatedAuction.managers = [
+                        ...updatedAuction.managers.slice(0, winningManagerIndex),
+                        {
+                          ...winningManager,
+                          budget: winningManager.budget - completed.finalBid,
+                          wonPlayers: [...winningManager.wonPlayers, completed.playerId]
+                        },
+                        ...updatedAuction.managers.slice(winningManagerIndex + 1)
+                      ];
+                      
+                      // Update current manager if it's the winning manager
+                      if (role === 'manager' && managerId === winningManager.id) {
+                        setCurrentManager(updatedAuction.managers[winningManagerIndex]);
+                      }
+                    }
+                  }
+                });
+              }
+              
+              return updatedAuction;
+            });
+          }
+        }
+      });
+      
+      // Handle errors
+      channel.bind('auction-error', (data: { message: string }) => {
+        addDebugMessage(`Received error: ${data.message}`);
+        // Don't set the error state to avoid blocking the UI, just log it
+        // Unless it's critical
+        if (data.message.includes('authentication') || data.message.includes('not found')) {
+          setError(data.message);
+        }
+      });
+    };
+
+    initialize();
+
+    // Cleanup function
+    return () => {
+      mounted = false;
+      
+      if (channelInstance) {
+        addDebugMessage('Cleaning up Pusher subscriptions');
+        channelInstance.unbind_all();
+        if (pusherInstance) {
+          pusherInstance.unsubscribe(`auction-${auctionId}`);
         }
       }
-    });
-    
-    // Handle errors
-    channel.bind('auction-error', (data: { message: string }) => {
-      addDebugMessage(`Received error: ${data.message}`);
-      // Don't set the error state to avoid blocking the UI, just log it
-      // Unless it's critical
-      if (data.message.includes('authentication') || data.message.includes('not found')) {
-        setError(data.message);
-      }
-    });
-    
-    return () => {
-      // Clean up Pusher subscription
-      addDebugMessage('Cleaning up Pusher subscriptions');
-      channel.unbind_all();
-      pusher.unsubscribe(channelName);
       
-      // Clean up expiration checker
       if (checker) {
         addDebugMessage('Stopping expiration checker');
         checker.stop();
       }
     };
-  }, [auctionId, role, managerId, sessionId, fetchFullAuction]);
+  }, [auctionId, role, managerId, sessionId, fetchFullAuction]); // Stable dependencies only
   
   // Determine if current manager can nominate
   const canNominate = useCallback(() => {
