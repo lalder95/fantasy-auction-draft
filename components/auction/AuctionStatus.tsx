@@ -8,11 +8,26 @@ interface AuctionStatusProps {
   role: 'commissioner' | 'manager' | 'viewer';
 }
 
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'setup':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'active':
+      return 'bg-green-100 text-green-800';
+    case 'paused':
+      return 'bg-orange-100 text-orange-800';
+    case 'completed':
+      return 'bg-blue-100 text-blue-800';
+    default:
+      return 'bg-gray-100 text-gray-800';
+  }
+};
+
 const AuctionStatus = ({ auction, currentManager, role }: AuctionStatusProps) => {
-  // Use the availablePlayers length or availablePlayersCount for total players
+  // Use either available players length or configured total players
   const totalPlayers = auction.availablePlayers?.length || 
-                      auction.settings.availablePlayersCount || 
-                      auction.settings.totalPlayers || 0;
+                      auction.settings.totalPlayers || 
+                      0;
 
   const getStatusTag = () => {
     switch (auction.status) {
@@ -73,7 +88,7 @@ const AuctionStatus = ({ auction, currentManager, role }: AuctionStatusProps) =>
         <div>
           <span className="text-sm text-gray-500">Current Nominator:</span>
           <span className="ml-2">
-            {getCurrentNominator(auction)}
+            {nominatingManager ? nominatingManager.name : <span className="text-gray-400">N/A</span>}
           </span>
         </div>
         <div>
