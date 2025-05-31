@@ -2,7 +2,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { sql } from '../../../lib/database-neon';
 
-// Add error handling to the logger itself
 const log = (msg: string, data?: any) => {
   try {
     const timestamp = new Date().toISOString();
@@ -13,13 +12,23 @@ const log = (msg: string, data?: any) => {
   }
 };
 
+interface AuctionResponse {
+  auction: {
+    id: string;
+    status: string;
+    settings: Record<string, any>;
+    nominationIndex: number;
+    availablePlayers: any[];
+    completedPlayers: any[];
+    playersUp: any[];
+  }
+}
+
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse
+  res: NextApiResponse<AuctionResponse | { error: string; message?: string }>
 ) {
-  // Wrap everything in a try-catch to catch initialization errors
   try {
-    // Get and validate auction ID
     const auctionId = Array.isArray(req.query.id) ? req.query.id[0] : req.query.id;
     
     if (!auctionId) {
@@ -29,27 +38,36 @@ export default async function handler(
 
     log('Processing request', { auctionId });
 
-    // Get auction data with all related information in a single query
+    // Simplified query to ensure we get the data we need
     const result = await sql`
       SELECT 
         a.id,
         a.status,
         a.current_nomination_manager_index,
-        a.settings,
-        (
-          SELECT json_agg(ap.*)
-          FROM available_players ap
-          WHERE ap.auction_id = a.id
+        COALESCE(a.settings, '{}'::jsonb) as settings,
+        COALESCE(
+          (
+            SELECT json_agg(ap.*)
+            FROM available_players ap
+            WHERE ap.auction_id = a.id
+          ),
+          '[]'::jsonb
         ) as available_players,
-        (
-          SELECT json_agg(cp.*)
-          FROM completed_players cp
-          WHERE cp.auction_id = a.id
+        COALESCE(
+          (
+            SELECT json_agg(cp.*)
+            FROM completed_players cp
+            WHERE cp.auction_id = a.id
+          ),
+          '[]'::jsonb
         ) as completed_players,
-        (
-          SELECT json_agg(pu.*)
-          FROM players_up pu
-          WHERE pu.auction_id = a.id
+        COALESCE(
+          (
+            SELECT json_agg(pu.*)
+            FROM players_up pu
+            WHERE pu.auction_id = a.id
+          ),
+          '[]'::jsonb
         ) as players_up
       FROM auctions a
       WHERE a.id = ${auctionId}
@@ -65,24 +83,33 @@ export default async function handler(
       id: auction.id, 
       status: auction.status,
       playerCounts: {
-        available: auction.available_players?.length || 0,
-        completed: auction.completed_players?.length || 0,
-        up: auction.players_up?.length || 0
+        available: auction.available_players?.length ?? 0,
+        completed: auction.completed_players?.length ?? 0,
+        up: auction.players_up?.length ?? 0
       }
     });
 
-    // Format response
-    const response = {
+    // Ensure all arrays are initialized
+    const response: AuctionResponse = {
       auction: {
         id: auction.id,
-        status: auction.status,
+        status: auction.status || 'setup',
         settings: auction.settings || {},
-        nominationIndex: auction.current_nomination_manager_index,
-        availablePlayers: auction.available_players || [],
-        completedPlayers: auction.completed_players || [],
-        playersUp: auction.players_up || []
+        nominationIndex: auction.current_nomination_manager_index || 0,
+        availablePlayers: Array.isArray(auction.available_players) ? auction.available_players : [],
+        completedPlayers: Array.isArray(auction.completed_players) ? auction.completed_players : [],
+        playersUp: Array.isArray(auction.players_up) ? auction.players_up : []
       }
     };
+
+    log('Sending response', {
+      id: response.auction.id,
+      playerCounts: {
+        available: response.auction.availablePlayers.length,
+        completed: response.auction.completedPlayers.length,
+        up: response.auction.playersUp.length
+      }
+    });
 
     return res.status(200).json(response);
 
