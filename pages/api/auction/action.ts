@@ -358,9 +358,8 @@ export default async function handler(
           const { updatedAuction: expiredAuction, expiredCount } = expireAuctions(auction);
           updatedAuction = expiredAuction;
           
-          // Only create update if something changed
+          // Only create update and send Pusher notification if something changed
           if (expiredCount > 0) {
-            // Get newly completed players
             const newlyCompletedPlayerIds = updatedAuction.completedPlayers
               .filter(p => !auctionBefore.completedPlayers.some((cp: {playerId: string}) => cp.playerId === p.playerId))
               .map(p => p.playerId);
@@ -377,11 +376,6 @@ export default async function handler(
             updateInfo = {
               updateType: 'EXPIRE_AUCTIONS',
               completedPlayers: completedPlayerDetails
-            };
-          } else {
-            updateInfo = {
-              updateType: 'EXPIRE_AUCTIONS',
-              completedPlayers: []
             };
           }
         } catch (error) {
