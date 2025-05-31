@@ -93,26 +93,27 @@ export async function saveAuction(auction: Auction): Promise<void> {
         // Log the count we're about to insert
         console.log(`Inserting ${auction.availablePlayers.length} available players for auction ${auction.id}`);
         
-        // Insert players in batches of 100 to avoid parameter limits
-        const batchSize = 100;
+        // Insert players in smaller batches to avoid parameter limits
+        const batchSize = 50;
         for (let i = 0; i < auction.availablePlayers.length; i += batchSize) {
           const batch = auction.availablePlayers.slice(i, i + batchSize);
-          await sql`
-            INSERT INTO available_players (
-              player_id, auction_id, full_name, position, team, status, years_exp
-            )
-            SELECT * FROM ${sql(
-              batch.map(player => ({
-                player_id: player.player_id,
-                auction_id: auction.id,
-                full_name: player.full_name,
-                position: player.position,
-                team: player.team || null,
-                status: player.status || 'Active',
-                years_exp: player.years_exp || 0
-              }))
-            )}
-          `;
+          
+          // Use the safe tagged template literal syntax
+          for (const player of batch) {
+            await sql`
+              INSERT INTO available_players (
+                player_id, auction_id, full_name, position, team, status, years_exp
+              ) VALUES (
+                ${player.player_id},
+                ${auction.id},
+                ${player.full_name},
+                ${player.position},
+                ${player.team || null},
+                ${player.status || 'Active'},
+                ${player.years_exp || 0}
+              )
+            `;
+          }
         }
         
         // Verify the count after insertion
