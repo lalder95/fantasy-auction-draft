@@ -122,10 +122,11 @@ export async function saveAuction(auction: Auction): Promise<void> {
         const countResult = await sql`
           SELECT COUNT(*) as count FROM available_players WHERE auction_id = ${auction.id}
         `;
-        console.log(`Verified ${countResult[0].count} players saved for auction ${auction.id}`);
+        const count = countResult.rows[0].count;
+        console.log(`Verified ${count} players saved for auction ${auction.id}`);
         
-        if (countResult[0].count !== auction.availablePlayers.length) {
-          throw new Error(`Player count mismatch after save: expected ${auction.availablePlayers.length}, got ${countResult[0].count}`);
+        if (count !== auction.availablePlayers.length) {
+          throw new Error(`Player count mismatch after save: expected ${auction.availablePlayers.length}, got ${count}`);
         }
       }
       await sql`COMMIT`;
@@ -229,12 +230,12 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
     // 1. Get main auction record
     const auctionResults = await sql`SELECT * FROM auctions WHERE id = ${auctionId}`;
     
-    if (!auctionResults || auctionResults.length === 0) {
+    if (!auctionResults || auctionResults.rows.length === 0) {
       console.log(`No auction found with ID: ${auctionId} in database`);
       return null;
     }
     
-    const auctionData = auctionResults[0];
+    const auctionData = auctionResults.rows[0];
     
     // 2. Get ALL managers - no limit
     const managersResults = await sql`
@@ -245,13 +246,13 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
     
     const managers: Manager[] = [];
     
-    for (const managerRow of managersResults) {
+    for (const managerRow of managersResults.rows) {
       // Get won players for this manager
       const wonPlayersResults = await sql`
         SELECT player_id FROM manager_won_players WHERE manager_id = ${managerRow.id}
       `;
       
-      const wonPlayers = wonPlayersResults.map((row: any) => row.player_id);
+      const wonPlayers = wonPlayersResults.rows.map((row: any) => row.player_id);
       
       managers.push({
         id: managerRow.id,
@@ -274,9 +275,9 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
       ORDER BY full_name
     `;
     
-    console.log(`Found ${availablePlayersResults.length} available players in database`);
+    console.log(`Found ${availablePlayersResults.rows.length} available players in database`);
     
-    const availablePlayers: SleeperPlayer[] = availablePlayersResults.map((row: any) => ({
+    const availablePlayers: SleeperPlayer[] = availablePlayersResults.rows.map((row: any) => ({
       player_id: row.player_id,
       full_name: row.full_name,
       position: row.position,
@@ -294,13 +295,13 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
     
     const playersUp: PlayerUp[] = [];
     
-    for (const playerRow of playersUpResults) {
+    for (const playerRow of playersUpResults.rows) {
       // Get passes for this player
       const passesResults = await sql`
         SELECT manager_id FROM player_passes WHERE player_id = ${playerRow.player_id}
       `;
       
-      const passes = passesResults.map((row: any) => row.manager_id);
+      const passes = passesResults.rows.map((row: any) => row.manager_id);
       
       playersUp.push({
         playerId: playerRow.player_id,
@@ -325,7 +326,7 @@ export async function getAuction(auctionId: string): Promise<Auction | null> {
       ORDER BY nomination_index
     `;
     
-    const completedPlayers = completedPlayersResults.map((row: any) => ({
+    const completedPlayers = completedPlayersResults.rows.map((row: any) => ({
       playerId: row.player_id,
       name: row.name,
       position: row.position,
@@ -378,7 +379,7 @@ export async function getAvailablePlayersCount(auctionId: string): Promise<numbe
       WHERE auction_id = ${auctionId}
     `;
     
-    return Number(result[0].count);
+    return Number(result.rows[0].count);
   } catch (error) {
     console.error(`Failed to get player count for auction ${auctionId}:`, error);
     throw error;
@@ -406,7 +407,7 @@ export async function createManagerSession(
     
     await sql`
       INSERT INTO manager_sessions (id, manager_id, auction_id, expires_at)
-      VALUES (${sessionId}, ${managerId}, ${auctionId}, ${expiresAt})
+      VALUES (${sessionId}, ${managerId}, ${auctionId}, ${expiresAt.toISOString()})
     `;
     
     console.log(`Successfully created manager session: ${sessionId}`);
@@ -437,9 +438,9 @@ export async function validateManagerSession(
       WHERE id = ${sessionId} AND auction_id = ${auctionId} AND expires_at > NOW()
     `;
     
-    if (sessions && sessions.length > 0) {
-      console.log(`Successfully validated session for manager: ${sessions[0].manager_id}`);
-      return sessions[0].manager_id;
+    if (sessions && sessions.rows.length > 0) {
+      console.log(`Successfully validated session for manager: ${sessions.rows[0].manager_id}`);
+      return sessions.rows[0].manager_id;
     }
     
     console.log(`No valid session found with ID: ${sessionId}`);
