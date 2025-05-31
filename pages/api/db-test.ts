@@ -2,39 +2,97 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { sql } from '../../lib/database-neon';
 
+interface DbTestResponse {
+  status: 'ok' | 'error';
+  connectionTest?: { test: number };
+  tableInfo?: {
+    exists: boolean;
+    auctionCount: number;
+    recentAuctions: Array<{
+      id: string;
+      status: string;
+      created_at: string;
+    }>;
+  };
+  error?: string;
+  location?: string;
+}
+
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse
+  res: NextApiResponse<DbTestResponse>
 ) {
   try {
-    // First test basic connection
+    // Step 1: Test basic connection
     console.log('Testing basic connection...');
     const connectionTest = await sql`SELECT 1 as test`;
     console.log('Basic connection successful');
 
-    // Then test auctions table
-    console.log('Testing auctions table...');
-    const auctionsTest = await sql`
-      SELECT id, status, created_at 
-      FROM auctions 
-      ORDER BY created_at DESC 
-      LIMIT 5
+    // Step 2: Check if auctions table exists
+    console.log('Checking auctions table...');
+    const tableCheck = await sql`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'auctions'
+      ) as exists
     `;
     
-    return res.status(200).json({ 
+    const tableExists = tableCheck.rows[0]?.exists;
+    console.log('Auctions table exists:', tableExists);
+
+    // Step 3: If table exists, get auction info
+    let auctionsInfo;
+    if (tableExists) {
+      console.log('Getting auction information...');
+      auctionsInfo = await sql`
+        SELECT 
+          id, 
+          status, 
+          created_at,
+          updated_at
+        FROM auctions 
+        ORDER BY created_at DESC 
+        LIMIT 5
+      `;
+      
+      // Also get total count
+      const countResult = await sql`SELECT COUNT(*) as count FROM auctions`;
+      const totalCount = parseInt(countResult.rows[0].count) || 0;
+      
+      console.log(`Found ${totalCount} total auctions`);
+    }
+
+    return res.status(200).json({
       status: 'ok',
       connectionTest: connectionTest.rows[0],
-      auctions: {
-        count: auctionsTest.rows.length,
-        recent: auctionsTest.rows
+      tableInfo: tableExists ? {
+        exists: true,
+        auctionCount: parseInt(auctionsInfo.rows[0]?.count) || 0,
+        recentAuctions: auctionsInfo.rows.map(row => ({
+          id: row.id,
+          status: row.status,
+          created_at: row.created_at
+        }))
+      } : {
+        exists: false,
+        auctionCount: 0,
+        recentAuctions: []
       }
     });
 
   } catch (error) {
     console.error('Database test failed:', error);
-    return res.status(500).json({ 
-      error: String(error),
-      location: error.message.includes('auctions') ? 'auctions query' : 'connection test'
-    });
+    
+    // Enhanced error handling
+    const errorResponse: DbTestResponse = {
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+      location: error instanceof Error && error.message.includes('auctions') 
+        ? 'auctions query' 
+        : 'connection test'
+    };
+
+    return res.status(500).json(errorResponse);
   }
 }
