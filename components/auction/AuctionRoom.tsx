@@ -47,24 +47,7 @@ export default function AuctionRoom({
     try {
       addDebugMessage(`Fetching full auction data for ID: ${auctionId}`);
       
-      // Always verify player count on load to ensure consistency
-      try {
-        addDebugMessage('Running player count verification...');
-        const fixResponse = await fetch('/api/auction/fix-player-count', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ auctionId })
-        });
-        
-        if (fixResponse.ok) {
-          const fixData = await fixResponse.json();
-          addDebugMessage(`Player count verification complete: ${fixData.counts.available} available players`);
-        }
-      } catch (fixError) {
-        addDebugMessage(`Player count verification failed: ${fixError}`);
-      }
-
-      // Now fetch the auction data after fixing counts
+      // First get the auction data before running verification
       const auctionResponse = await axios.get(`/api/auction/${auctionId}`, {
         params: { role, managerId, sessionId }
       });
@@ -76,30 +59,34 @@ export default function AuctionRoom({
       
       const auctionData = auctionResponse.data.auction;
       
-      // Only fetch player stats if we don't have player counts yet or if they seem incorrect
-      const needsPlayerStats = !auctionData.settings.totalPlayers || 
-                              !auctionData.settings.availablePlayersCount ||
-                              auctionData.settings.availablePlayersCount !== auctionData.availablePlayers?.length;
+      // Only verify player count if the auction is in setup state
+      // or if counts are missing/incorrect
+      const needsVerification = 
+        auctionData.status === 'setup' ||
+        !auctionData.settings.totalPlayers || 
+        !auctionData.settings.availablePlayersCount ||
+        auctionData.settings.availablePlayersCount !== auctionData.availablePlayers?.length;
       
-      if (needsPlayerStats) {
+      if (needsVerification) {
         try {
-          const statsResponse = await axios.get(`/api/auction/player-stats`, {
-            params: { auctionId }
+          addDebugMessage('Running player count verification...');
+          const fixResponse = await fetch('/api/auction/fix-player-count', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              auctionId,
+              expectedCount: auctionData.settings.totalPlayers // Pass the configured player count
+            })
           });
           
-          if (statsResponse.data.success) {
-            // Update auction with the latest player counts
-            auctionData.settings = {
-              ...auctionData.settings,
-              totalPlayers: statsResponse.data.totalPlayers,
-              availablePlayersCount: statsResponse.data.availablePlayers
-            };
-            
-            addDebugMessage(`Auction data updated with verified counts - Total: ${statsResponse.data.totalPlayers}, Available: ${statsResponse.data.availablePlayers}`);
+          if (fixResponse.ok) {
+            const fixData = await fixResponse.json();
+            addDebugMessage(`Player count verification complete: ${fixData.counts.available} available players`);
+            // Update auction data with verified counts but keep original totalPlayers
+            auctionData.settings.availablePlayersCount = fixData.counts.available;
           }
-        } catch (statsError) {
-          addDebugMessage(`Failed to fetch player stats: ${statsError}`);
-          // Continue with auction data as-is
+        } catch (fixError) {
+          addDebugMessage(`Player count verification failed: ${fixError}`);
         }
       }
       
