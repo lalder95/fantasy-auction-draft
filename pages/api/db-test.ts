@@ -63,16 +63,19 @@ export default async function handler(
       console.log(`Found ${totalCount} total auctions`);
     }
 
+    // Build the response with proper type checking
     return res.status(200).json({
       status: 'ok',
-      connectionTest: connectionTest.rows[0],
-      tableInfo: tableExists ? {
+      connectionTest: { 
+        test: Number(connectionTest.rows[0]?.test) || 0 
+      },
+      tableInfo: tableExists && auctionsInfo ? {
         exists: true,
-        auctionCount: parseInt(auctionsInfo.rows[0]?.count) || 0,
+        auctionCount: parseInt(String(countResult?.rows[0]?.count)) || 0,
         recentAuctions: auctionsInfo.rows.map(row => ({
-          id: row.id,
-          status: row.status,
-          created_at: row.created_at
+          id: String(row.id),
+          status: String(row.status),
+          created_at: String(row.created_at)
         }))
       } : {
         exists: false,
@@ -84,7 +87,6 @@ export default async function handler(
   } catch (error) {
     console.error('Database test failed:', error);
     
-    // Enhanced error handling
     const errorResponse: DbTestResponse = {
       status: 'error',
       error: error instanceof Error ? error.message : String(error),
