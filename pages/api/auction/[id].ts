@@ -19,6 +19,7 @@ export default async function handler(
 ) {
   // Wrap everything in a try-catch to catch initialization errors
   try {
+    // Get and validate auction ID
     const auctionId = Array.isArray(req.query.id) ? req.query.id[0] : req.query.id;
     
     if (!auctionId) {
@@ -28,62 +29,76 @@ export default async function handler(
 
     log('Processing request', { auctionId });
 
-    try {
-      // Test database connection first
-      await sql`SELECT 1`;
-      log('Database connection OK');
+    // Get auction data with all related information in a single query
+    const result = await sql`
+      SELECT 
+        a.id,
+        a.status,
+        a.current_nomination_manager_index,
+        a.settings,
+        (
+          SELECT json_agg(ap.*)
+          FROM available_players ap
+          WHERE ap.auction_id = a.id
+        ) as available_players,
+        (
+          SELECT json_agg(cp.*)
+          FROM completed_players cp
+          WHERE cp.auction_id = a.id
+        ) as completed_players,
+        (
+          SELECT json_agg(pu.*)
+          FROM players_up pu
+          WHERE pu.auction_id = a.id
+        ) as players_up
+      FROM auctions a
+      WHERE a.id = ${auctionId}
+    `;
 
-      // Simple query to get auction
-      const result = await sql`
-        SELECT id, status, nomination_index, settings 
-        FROM auctions 
-        WHERE id = ${auctionId}
-      `;
+    if (!result?.rows?.length) {
+      log('Auction not found', { auctionId });
+      return res.status(404).json({ error: 'Auction not found' });
+    }
 
-      log('Query result', { 
-        rowCount: result?.rows?.length,
-        firstRow: result?.rows?.[0] 
-      });
-
-      if (!result?.rows?.length) {
-        return res.status(404).json({ error: 'Auction not found' });
+    const auction = result.rows[0];
+    log('Query successful', { 
+      id: auction.id, 
+      status: auction.status,
+      playerCounts: {
+        available: auction.available_players?.length || 0,
+        completed: auction.completed_players?.length || 0,
+        up: auction.players_up?.length || 0
       }
+    });
 
-      // Return minimal data first
-      const auction = result.rows[0];
-      const response = {
+    // Format response
+    const response = {
+      auction: {
         id: auction.id,
         status: auction.status,
-        nominationIndex: auction.nomination_index,
-        settings: auction.settings || {}
-      };
+        settings: auction.settings || {},
+        nominationIndex: auction.current_nomination_manager_index,
+        availablePlayers: auction.available_players || [],
+        completedPlayers: auction.completed_players || [],
+        playersUp: auction.players_up || []
+      }
+    };
 
-      log('Sending response', response);
-      return res.status(200).json(response);
+    return res.status(200).json(response);
 
-    } catch (error) {
-      const err = error as Error;
-      log('Error in handler', {
-        name: err?.name,
-        message: err?.message,
-        stack: err?.stack
-      });
-
-      return res.status(500).json({
-        error: 'Internal server error',
-        message: err?.message
-      });
-    }
   } catch (error) {
-    // Catch and log any initialization errors
-    log('Initialization error', {
-      message: (error as Error)?.message,
-      stack: (error as Error)?.stack
+    log('Error in handler', {
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack
+      } : String(error)
     });
 
     return res.status(500).json({
       error: 'Internal server error',
-      message: 'An unexpected error occurred'
+      message: process.env.NODE_ENV === 'development' 
+        ? error instanceof Error ? error.message : String(error)
+        : 'An unexpected error occurred'
     });
   }
 }
