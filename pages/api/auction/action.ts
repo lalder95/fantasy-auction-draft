@@ -356,10 +356,11 @@ export default async function handler(
           // Check for expired auctions
           const auctionBefore = JSON.parse(JSON.stringify(auction));
           const { updatedAuction: expiredAuction, expiredCount } = expireAuctions(auction);
-          updatedAuction = expiredAuction;
           
-          // Only create update and send Pusher notification if something changed
+          // Only proceed if there were actual changes
           if (expiredCount > 0) {
+            updatedAuction = expiredAuction;
+            
             const newlyCompletedPlayerIds = updatedAuction.completedPlayers
               .filter(p => !auctionBefore.completedPlayers.some((cp: {playerId: string}) => cp.playerId === p.playerId))
               .map(p => p.playerId);
@@ -377,6 +378,15 @@ export default async function handler(
               updateType: 'EXPIRE_AUCTIONS',
               completedPlayers: completedPlayerDetails
             };
+            
+            // Only save to database if there were changes
+            await saveAuction(updatedAuction);
+          } else {
+            // If nothing expired, return early without saving or sending updates
+            return res.status(200).json({
+              success: true,
+              message: 'No auctions expired'
+            });
           }
         } catch (error) {
           return res.status(400).json({ 
