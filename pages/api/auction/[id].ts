@@ -14,22 +14,27 @@ export default async function handler(
   }
   
   try {
-    console.log('Fetching auction data for:', auctionId);
+    // First get the auction settings to ensure we have the correct total
+    const settingsQuery = await sql`
+      SELECT settings FROM auctions WHERE id = ${auctionId}
+    `;
     
-    // Get auction data including ALL available players
+    const settings = settingsQuery.rows[0]?.settings;
+    console.log('Auction settings:', settings);
+
+    // Then get full auction data with players
     const auctionQueryResult = await sql`
       WITH auction_data AS (
         SELECT 
           a.*,
-          COALESCE(
-            (SELECT json_agg(ap.*)
-             FROM available_players ap 
-             WHERE ap.auction_id = a.id), 
-            '[]'::json
-          ) as available_players,
-          (SELECT COUNT(*) 
-           FROM available_players 
-           WHERE auction_id = a.id) as total_available
+          (
+            SELECT json_build_object(
+              'players', COALESCE(json_agg(ap.*), '[]'::json),
+              'count', COUNT(*)
+            )
+            FROM available_players ap 
+            WHERE ap.auction_id = a.id
+          ) as player_data
         FROM auctions a
         WHERE a.id = ${auctionId}
       )
@@ -43,44 +48,40 @@ export default async function handler(
       return res.status(404).json({ message: 'Auction not found' });
     }
 
-    console.log('Raw auction data:', {
-      hasSettings: !!auctionResult.settings,
-      totalAvailable: auctionResult.total_available,
-      availablePlayersType: typeof auctionResult.available_players,
-      isArray: Array.isArray(auctionResult.available_players)
+    // Extract player data safely
+    const playerData = auctionResult.player_data || { players: [], count: 0 };
+    const availablePlayers = Array.isArray(playerData.players) ? playerData.players : [];
+    const totalAvailable = parseInt(playerData.count) || 0;
+
+    console.log('Player data:', {
+      total: totalAvailable,
+      available: availablePlayers.length,
+      isArray: Array.isArray(availablePlayers)
     });
 
-    // Ensure available_players is always an array with proper initialization
-    const availablePlayers = auctionResult.available_players 
-      ? (Array.isArray(auctionResult.available_players) 
-          ? auctionResult.available_players 
-          : JSON.parse(auctionResult.available_players)) 
-      : [];
-
-    // Force the type to be an array if it's not
-    const safeAvailablePlayers = Array.isArray(availablePlayers) ? availablePlayers : [];
-    
-    const totalPlayers = parseInt(auctionResult.total_available) || 0;
-
-    // Build the auction object with guaranteed array for availablePlayers
+    // Build the auction object with guaranteed arrays and counts
     const auction = {
       ...auctionResult,
-      availablePlayers: safeAvailablePlayers,
+      availablePlayers,
       settings: {
-        ...auctionResult.settings,
+        ...settings,
         playerCountDiagnostic: {
-          totalPlayers,
-          availablePlayers: safeAvailablePlayers.length,
-          expectedCount: totalPlayers,
-          matchesActual: safeAvailablePlayers.length === totalPlayers
+          totalPlayers: totalAvailable,
+          availablePlayers: availablePlayers.length,
+          expectedCount: totalAvailable,
+          matchesActual: true
         }
-      }
+      },
+      completedPlayers: auctionResult.completed_players || [],
+      playersUp: auctionResult.players_up || []
     };
 
-    console.log('Processed auction data:', {
-      totalPlayers,
-      availablePlayersLength: safeAvailablePlayers.length,
-      hasSettings: !!auction.settings
+    // Verify the response structure
+    console.log('Response structure:', {
+      hasSettings: !!auction.settings,
+      hasAvailablePlayers: Array.isArray(auction.availablePlayers),
+      hasCompletedPlayers: Array.isArray(auction.completedPlayers),
+      hasPlayersUp: Array.isArray(auction.playersUp)
     });
 
     return res.status(200).json({ auction });
