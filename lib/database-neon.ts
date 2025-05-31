@@ -3,9 +3,11 @@ import { neon } from '@neondatabase/serverless';
 import { Auction, Manager, PlayerUp } from './auction';
 import { v4 as uuidv4 } from 'uuid';
 import { SleeperPlayer } from './sleeper';
+import { sql } from '@vercel/postgres';
 
 // Create a SQL client - fail fast if not configured
-const sql = neon(process.env.DATABASE_URL!);
+const client = neon(process.env.DATABASE_URL!);
+export { sql };  // Export sql for use in other files
 
 /**
  * Save auction to database
