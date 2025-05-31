@@ -2,9 +2,37 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { sql } from '../../../lib/database-neon';
 
-// Debug helper function
+// Enhanced debug helper with error handling
 const debugLog = (step: string, data: any) => {
-  console.log(`[DEBUG][${new Date().toISOString()}][${step}]`, JSON.stringify(data, null, 2));
+  try {
+    console.log(`[DEBUG][${new Date().toISOString()}][${step}]`, 
+      JSON.stringify(data, (key, value) => {
+        if (value instanceof Error) {
+          return {
+            message: value.message,
+            name: value.name,
+            stack: value.stack,
+            ...value
+          };
+        }
+        return value;
+      }, 2)
+    );
+  } catch (error) {
+    console.log(`[DEBUG][${new Date().toISOString()}][ERROR LOGGING]`, 
+      'Failed to stringify debug data:', error);
+  }
+};
+
+// Request validation helper
+const validateRequest = (req: NextApiRequest): string | null => {
+  const { id } = req.query;
+  const auctionId = Array.isArray(id) ? id[0] : id;
+  
+  if (!auctionId || typeof auctionId !== 'string') {
+    return null;
+  }
+  return auctionId;
 };
 
 export default async function handler(
@@ -12,129 +40,80 @@ export default async function handler(
   res: NextApiResponse
 ) {
   const startTime = Date.now();
-  debugLog('Init', { 
-    method: req.method,
-    query: req.query,
-    headers: req.headers,
-    url: req.url
-  });
-
-  const { id } = req.query;
-  const auctionId = Array.isArray(id) ? id[0] : id;
-
-  debugLog('Params', { 
-    rawId: id,
-    processedAuctionId: auctionId,
-    isValid: Boolean(auctionId && typeof auctionId === 'string')
-  });
-
-  if (!auctionId || typeof auctionId !== 'string') {
-    return res.status(400).json({ message: 'Invalid auction id' });
-  }
   
   try {
-    // Step 1: Validate database connection
+    // Step 1: Initial request logging
+    debugLog('Request Details', {
+      method: req.method,
+      query: req.query,
+      headers: {
+        ...req.headers,
+        // Redact sensitive headers
+        cookie: req.headers.cookie ? '[REDACTED]' : undefined,
+        authorization: req.headers.authorization ? '[REDACTED]' : undefined
+      },
+      url: req.url
+    });
+
+    // Step 2: Validate request
+    const auctionId = validateRequest(req);
+    if (!auctionId) {
+      debugLog('Validation Failed', { query: req.query });
+      return res.status(400).json({ message: 'Invalid auction id' });
+    }
+
+    // Step 3: Database connection check
+    debugLog('DB Check Starting', { auctionId });
     try {
-      debugLog('DB Connection Check', 'Starting');
       await sql`SELECT 1`;
-      debugLog('DB Connection Check', 'Successful');
-    } catch (dbConnError) {
-      debugLog('DB Connection Error', {
-        error: dbConnError instanceof Error ? {
-          message: dbConnError.message,
-          stack: dbConnError.stack
-        } : String(dbConnError)
-      });
+      debugLog('DB Check Success', { auctionId });
+    } catch (dbError) {
+      debugLog('DB Connection Failed', { error: dbError });
       throw new Error('Database connection failed');
     }
 
-    // Step 2: Get basic auction data
-    debugLog('Auction Query', { attempting: auctionId });
-    let basicAuctionQuery;
-    try {
-      const queryStartTime = Date.now();
-      basicAuctionQuery = await sql`
-        SELECT 
-          id, 
-          status, 
-          nomination_index,
-          settings::text as settings_raw,
-          COALESCE(settings::jsonb, '{}'::jsonb) as settings
-        FROM auctions 
-        WHERE id = ${auctionId}
-      `;
-      debugLog('Query Execution Time', {
-        ms: Date.now() - queryStartTime,
-        rowCount: basicAuctionQuery?.rows?.length
-      });
-    } catch (dbError) {
-      debugLog('Database Error', {
-        error: dbError instanceof Error ? {
-          message: dbError.message,
-          name: dbError.name,
-          stack: dbError.stack
-        } : String(dbError),
-        auctionId,
-        timestamp: new Date().toISOString()
-      });
-      throw dbError;
-    }
+    // Step 4: Fetch basic auction data with timeout
+    const queryTimeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Query timeout')), 5000)
+    );
+    
+    const queryPromise = sql`
+      SELECT 
+        id, 
+        status, 
+        nomination_index,
+        settings::text as settings_raw,
+        COALESCE(settings::jsonb, '{}'::jsonb) as settings
+      FROM auctions 
+      WHERE id = ${auctionId}
+    `;
 
-    // Step 3: Validate query results
-    debugLog('Query Results', {
-      hasRows: !!basicAuctionQuery?.rows,
-      rowCount: basicAuctionQuery?.rows?.length,
-      firstRow: basicAuctionQuery?.rows?.[0] ? {
-        id: basicAuctionQuery.rows[0].id,
-        status: basicAuctionQuery.rows[0].status,
-        hasSettings: !!basicAuctionQuery.rows[0].settings,
-        settingsRaw: basicAuctionQuery.rows[0].settings_raw,
-        nominationIndex: basicAuctionQuery.rows[0].nomination_index
-      } : null
-    });
+    debugLog('Query Starting', { auctionId, sql: queryPromise.text });
+    
+    const basicAuctionQuery = await Promise.race([queryPromise, queryTimeout])
+      .catch(error => {
+        debugLog('Query Failed', { error, auctionId });
+        throw error;
+      });
 
+    // Step 5: Process query results
     if (!basicAuctionQuery?.rows?.length) {
-      debugLog('Not Found', { auctionId });
+      debugLog('No Results', { auctionId });
       return res.status(404).json({ message: 'Auction not found' });
     }
 
     const auctionResult = basicAuctionQuery.rows[0];
+    debugLog('Raw Result', {
+      hasData: !!auctionResult,
+      fields: Object.keys(auctionResult || {})
+    });
 
-    // Step 4: Process settings
-    let settings;
-    try {
-      settings = typeof auctionResult.settings === 'object' 
-        ? auctionResult.settings 
-        : JSON.parse(auctionResult.settings_raw || '{}');
-      
-      debugLog('Settings Processed', {
-        originalType: typeof auctionResult.settings,
-        processedType: typeof settings,
-        hasSettings: !!settings,
-        keys: Object.keys(settings)
-      });
-    } catch (settingsError) {
-      debugLog('Settings Parse Error', {
-        error: settingsError instanceof Error ? settingsError.message : String(settingsError),
-        raw: auctionResult.settings_raw
-      });
-      settings = {};
-    }
-
-    // Step 5: Build response
+    // Step 6: Build minimal response
     const response = {
       auction: {
         id: auctionResult.id,
         status: auctionResult.status || 'pending',
-        settings: {
-          ...settings,
-          playerCountDiagnostic: {
-            totalPlayers: 0,
-            availablePlayers: 0,
-            expectedCount: 0,
-            matchesActual: false
-          }
-        },
+        settings: auctionResult.settings || {},
         nominationIndex: auctionResult.nomination_index || 0,
         availablePlayers: [],
         completedPlayers: [],
@@ -142,29 +121,28 @@ export default async function handler(
       }
     };
 
-    // Final validation
-    debugLog('Response Validation', {
-      hasId: !!response.auction.id,
-      hasStatus: !!response.auction.status,
-      hasSettings: !!response.auction.settings,
-      totalTime: Date.now() - startTime
+    debugLog('Response Ready', {
+      timeMs: Date.now() - startTime,
+      responseSize: JSON.stringify(response).length
     });
 
     return res.status(200).json(response);
 
   } catch (error) {
     debugLog('Fatal Error', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      name: error instanceof Error ? error.name : 'Unknown',
+      error,
       stack: error instanceof Error ? error.stack : undefined,
-      auctionId,
-      totalTime: Date.now() - startTime
+      timeMs: Date.now() - startTime
     });
 
-    return res.status(500).json({ 
+    // Send detailed error in development only
+    const isDev = process.env.NODE_ENV === 'development';
+    return res.status(500).json({
       message: 'Server error',
-      details: error instanceof Error ? error.message : String(error),
-      timestamp: new Date().toISOString()
+      ...(isDev && {
+        details: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      })
     });
   }
 }
