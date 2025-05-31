@@ -24,7 +24,7 @@ export default async function handler(
 
   try {
     // Test database connection first
-    await sql`SELECT 1`.timeout(2000);
+    await sql`SELECT 1`;
     log('Database connection OK');
 
     // Simple query to get auction
@@ -32,7 +32,7 @@ export default async function handler(
       SELECT id, status, nomination_index, settings 
       FROM auctions 
       WHERE id = ${auctionId}
-    `.timeout(2000);
+    `;
 
     log('Query result', { 
       rowCount: result?.rows?.length,
@@ -56,15 +56,16 @@ export default async function handler(
     return res.status(200).json(response);
 
   } catch (error) {
+    const err = error as Error;
     log('Error in handler', {
-      name: error?.name,
-      message: error?.message,
-      stack: error?.stack
+      name: err?.name,
+      message: err?.message,
+      stack: err?.stack
     });
 
     return res.status(500).json({
       error: 'Internal server error',
-      message: error?.message
+      message: err?.message
     });
   }
 }
