@@ -30,7 +30,7 @@ export default async function handler(
 ) {
   try {
     const auctionId = Array.isArray(req.query.id) ? req.query.id[0] : req.query.id;
-    
+
     if (!auctionId) {
       log('Missing auction ID', req.query);
       return res.status(400).json({ error: 'Missing auction ID' });
@@ -38,7 +38,6 @@ export default async function handler(
 
     log('Processing request', { auctionId });
 
-    // Simplified query to ensure we get the data we need
     const result = await sql`
       SELECT 
         a.id,
@@ -73,6 +72,8 @@ export default async function handler(
       WHERE a.id = ${auctionId}
     `;
 
+    log('Auction query result', result);
+
     if (!result?.rows?.length) {
       log('Auction not found', { auctionId });
       return res.status(404).json({ error: 'Auction not found' });
@@ -89,7 +90,6 @@ export default async function handler(
       }
     });
 
-    // Ensure all arrays are initialized
     const response: AuctionResponse = {
       auction: {
         id: auction.id,
@@ -114,17 +114,11 @@ export default async function handler(
     return res.status(200).json(response);
 
   } catch (error) {
-    log('Error in handler', {
-      error: error instanceof Error ? {
-        message: error.message,
-        stack: error.stack
-      } : String(error)
-    });
-
+    console.error('API Error:', error);
     return res.status(500).json({
       error: 'Internal server error',
-      message: process.env.NODE_ENV === 'development' 
-        ? error instanceof Error ? error.message : String(error)
+      message: process.env.NODE_ENV === 'development'
+        ? (error instanceof Error ? error.stack : String(error))
         : 'An unexpected error occurred'
     });
   }
