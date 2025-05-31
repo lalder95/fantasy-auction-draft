@@ -19,40 +19,50 @@ export default async function handler(
       WITH auction_data AS (
         SELECT 
           a.*,
-          ap.players as available_players,
-          (SELECT COUNT(*) FROM available_players WHERE auction_id = a.id) as total_available
+          (SELECT json_agg(ap.*)
+           FROM available_players ap 
+           WHERE ap.auction_id = a.id) as available_players,
+          (SELECT COUNT(*) 
+           FROM available_players 
+           WHERE auction_id = a.id) as total_available
         FROM auctions a
-        LEFT JOIN LATERAL (
-          SELECT json_agg(ap.*) as players
-          FROM available_players ap
-          WHERE ap.auction_id = a.id
-        ) ap ON true
         WHERE a.id = ${auctionId}
       )
       SELECT * FROM auction_data
     `;
 
-    // Access the first row from the result properly
     const auctionResult = auctionQueryResult.rows[0];
 
     if (!auctionResult) {
       return res.status(404).json({ message: 'Auction not found' });
     }
 
-    // Ensure we preserve all player data
+    // Ensure available_players is always an array
+    const availablePlayers = Array.isArray(auctionResult.available_players) 
+      ? auctionResult.available_players 
+      : [];
+
+    // Build the auction object with guaranteed array for availablePlayers
     const auction = {
       ...auctionResult,
+      availablePlayers,
       settings: {
         ...auctionResult.settings,
         playerCountDiagnostic: {
-          totalPlayers: auctionResult.total_available,
-          availablePlayers: auctionResult.available_players?.length || 0,
-          expectedCount: auctionResult.total_available,
+          totalPlayers: parseInt(auctionResult.total_available) || 0,
+          availablePlayers: availablePlayers.length,
+          expectedCount: parseInt(auctionResult.total_available) || 0,
           matchesActual: true
         }
-      },
-      availablePlayers: auctionResult.available_players || []
+      }
     };
+
+    // Add debug logging
+    console.log('Auction data:', {
+      totalAvailable: auctionResult.total_available,
+      playersLength: availablePlayers.length,
+      hasPlayers: Array.isArray(availablePlayers)
+    });
 
     return res.status(200).json({ auction });
   } catch (error) {
